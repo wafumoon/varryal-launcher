@@ -1,0 +1,55 @@
+/* Global styles — all values from CSS custom properties set by applyTheme.ts */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-hi);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-lo); }
+
+button {
+  cursor: pointer;
+  border: none;
+  outline: none;
+  font-family: var(--font-ui);
+}
+
+input {
+  outline: none;
+  font-family: var(--font-ui);
+}
+
+a { color: var(--primary); text-decoration: none; }
+a:hover { color: var(--primary-hover); }
+
+/* Utility classes */
+.text-hi  { color: var(--text-hi); }
+.text-mid { color: var(--text-mid); }
+.text-lo  { color: var(--text-lo); }
+.text-primary { color: var(--primary); }
+.text-error   { color: var(--error); }
+.text-success { color: var(--success); }
+.text-warn    { color: var(--warn); }

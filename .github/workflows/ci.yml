@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  # ── Java bridge ────────────────────────────────────────────────────────────
+  bridge:
+    name: Bridge (Java 21 / Gradle)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: gradle
+      - name: Build bridge module
+        working-directory: bridge
+        run: gradle build --no-daemon
+
+  # ── React UI ───────────────────────────────────────────────────────────────
+  ui:
+    name: UI (Node / pnpm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: apps/ui/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: apps/ui
+        run: pnpm install --frozen-lockfile
+      - name: Build UI
+        working-directory: apps/ui
+        run: pnpm build
+
+  # ── Tauri shell ────────────────────────────────────────────────────────────
+  tauri:
+    name: Tauri shell (${{ matrix.os }})
+    needs: [bridge, ui]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: apps/ui/pnpm-lock.yaml
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/shell/src-tauri -> target
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libappindicator3-dev librsvg2-dev patchelf
+      - name: Install UI deps
+        working-directory: apps/ui
+        run: pnpm install --frozen-lockfile
+      - name: Build UI
+        working-directory: apps/ui
+        run: pnpm build
+      - name: Tauri build
+        working-directory: apps/shell
+        run: pnpm tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: varryal-${{ matrix.os }}
+          path: |
+            apps/shell/src-tauri/target/release/bundle/**/*.exe
+            apps/shell/src-tauri/target/release/bundle/**/*.msi
+            apps/shell/src-tauri/target/release/bundle/**/*.dmg
+            apps/shell/src-tauri/target/release/bundle/**/*.AppImage
+            apps/shell/src-tauri/target/release/bundle/**/*.deb

@@ -1,0 +1,54 @@
+{
+  "login": {
+    "title": "Sign in to Varryal",
+    "login": "Username",
+    "password": "Password",
+    "loginBtn": "Sign in",
+    "loading": "Signing in...",
+    "error": "Login failed"
+  },
+  "serverMenu": {
+    "title": "Select server",
+    "play": "Play",
+    "settings": "Settings",
+    "logout": "Sign out",
+    "online": "online",
+    "offline": "offline",
+    "players": "{{count}} / {{max}} players"
+  },
+  "download": {
+    "title": "Updating",
+    "phase_JAVA": "Downloading Java...",
+    "phase_ASSETS": "Downloading assets...",
+    "phase_CLIENT": "Downloading client...",
+    "phase_LAUNCH": "Preparing launch...",
+    "cancel": "Cancel",
+    "of": "of"
+  },
+  "running": {
+    "title": "Game running",
+    "console": "Console",
+    "terminate": "Terminate",
+    "exitedWith": "Process exited with code {{code}}"
+  },
+  "settings": {
+    "title": "Settings",
+    "ram": "RAM",
+    "ramHint": "MB (recommended ≥ 2048)",
+    "java": "Java version",
+    "flags": "Flags",
+    "autoEnter": "Auto-join server",
+    "fullscreen": "Fullscreen",
+    "waylandSupport": "Wayland support (Linux)",
+    "save": "Save",
+    "saved": "Saved!"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "back": "Back",
+    "close": "Close",
+    "retry": "Retry",
+    "version": "Version {{v}}"
+  }
+}

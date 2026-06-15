@@ -1,0 +1,29 @@
+{
+  "name": "Varryal Dark",
+  "colors": {
+    "bgBase":      "#0B0B0C",
+    "bgElev1":     "#141517",
+    "bgElev2":     "#1B1D21",
+    "bgElev3":     "#23262B",
+    "border":      "#2A2D33",
+    "borderStrong":"#3A3E46",
+    "primary":     "#5B8DEF",
+    "primaryHover":"#6E9BF2",
+    "primaryPress":"#4A7CDE",
+    "success":     "#3FB66B",
+    "warn":        "#E0A93B",
+    "error":       "#E5575C",
+    "textHi":      "#F4F4F5",
+    "textMid":     "#A1A1AA",
+    "textLo":      "#6B6F76"
+  },
+  "font": {
+    "ui":   "Inter, system-ui, sans-serif",
+    "mono": "'JetBrains Mono', 'Fira Mono', monospace"
+  },
+  "radius": {
+    "control": 8,
+    "card":    12,
+    "modal":   16
+  }
+}

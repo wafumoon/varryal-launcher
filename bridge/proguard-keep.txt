@@ -1,0 +1,47 @@
+# ProGuard keep rules for Varryal Bridge Runtime module
+# The LaunchServer build pipeline runs ProGuard on the assembled launcher jar.
+# These rules must be included in the server's ProGuard configuration to ensure
+# our entry class, provider, and config are not obfuscated/removed.
+
+# ── Module entry class (Module-Main-Class manifest attribute) ─────────────────
+-keep public class ru.varryal.launcher.bridge.BridgeRuntimeModule {
+    public <init>();
+    public void init(pro.gravit.launcher.modules.LauncherInitContext);
+}
+
+# ── RuntimeProvider implementation ───────────────────────────────────────────
+-keep public class ru.varryal.launcher.bridge.BridgeRuntimeProvider {
+    public <init>();
+    public void preLoad();
+    public void init(boolean);
+    public void run(java.lang.String[]);
+    public void triggerShutdown();
+}
+
+# ── Module config class (Module-Config-Class manifest attribute) ──────────────
+-keep public class ru.varryal.launcher.bridge.config.BridgeModuleConfig {
+    public *;
+}
+
+# ── WebSocket server (must survive reflection-based instantiation) ─────────────
+-keep public class ru.varryal.launcher.bridge.WsBridgeServer {
+    public <init>(...);
+    public static final com.google.gson.Gson GSON;
+    public void broadcastEvent(java.lang.String, java.lang.String, com.google.gson.JsonObject);
+    public int getBoundPort();
+    public java.lang.String getSessionToken();
+}
+
+# ── IPC dispatcher ─────────────────────────────────────────────────────────────
+-keep public class ru.varryal.launcher.bridge.IpcDispatcher { *; }
+
+# ── Callback implementations ──────────────────────────────────────────────────
+-keep public class ru.varryal.launcher.bridge.WsMainCallback { *; }
+-keep public class ru.varryal.launcher.bridge.WsDownloadCallback { *; }
+-keep public class ru.varryal.launcher.bridge.WsRunCallback { *; }
+
+# ── Keep bundled dependencies (Gson, Java-WebSocket) ─────────────────────────
+-keep class com.google.gson.** { *; }
+-keep class org.java_websocket.** { *; }
+-dontwarn org.java_websocket.**
+-dontwarn com.google.gson.**

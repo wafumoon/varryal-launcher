@@ -1,0 +1,66 @@
+[package]
+name = "varryal-shell"
+version = "1.0.0"
+description = "Varryal Launcher — Tauri shell"
+authors = ["Varryal Project Contributors"]
+license = "GPL-3.0"
+edition = "2021"
+rust-version = "1.77"
+
+# See https://v2.tauri.app
+[lib]
+name = "varryal_shell_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "varryal-shell"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri              = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell   = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-opener  = "2"
+
+# HTTP + streaming (JRE download)
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# WebSocket client to Java bridge
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"
+
+# Serialisation
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+
+# Archive extraction
+zip    = "2"
+tar    = "0.4"
+flate2 = "1"
+
+# Platform paths
+dirs-next = "2"
+
+# Hashing (JRE integrity)
+sha2 = "0.10"
+hex  = "0.4"
+
+# UUID generation for session tokens
+uuid = { version = "1", features = ["v4"] }
+
+# Logging
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto           = true
+opt-level     = "s"
+panic         = "abort"
+strip         = true
+codegen-units = 1

@@ -1,0 +1,44 @@
+# ── Rust / Tauri ──────────────────────────────────────────────
+target/
+**/*.rs.bk
+apps/shell/src-tauri/target/
+
+# ── Node / frontend ───────────────────────────────────────────
+node_modules/
+apps/ui/node_modules/
+apps/ui/dist/
+apps/ui/.vite/
+.pnpm-store/
+
+# ── Gradle / Java ─────────────────────────────────────────────
+bridge/.gradle/
+bridge/build/
+bridge/local.properties
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# ── OS / IDEs ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/settings.json
+*.suo
+*.user
+
+# ── Tauri build outputs ───────────────────────────────────────
+apps/shell/src-tauri/gen/
+apps/shell/dist-tauri/
+
+# ── Secrets — never commit ────────────────────────────────────
+*.p12
+*.pfx
+*.pem
+*.key
+minisign.key
+.env
+.env.*
+!.env.example
+
+# ── Runtime data dirs (local dev) ────────────────────────────
+data/

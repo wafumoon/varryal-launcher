@@ -1,0 +1,54 @@
+{
+  "login": {
+    "title": "Войдите в Varryal",
+    "login": "Логин",
+    "password": "Пароль",
+    "loginBtn": "Войти",
+    "loading": "Вход...",
+    "error": "Ошибка входа"
+  },
+  "serverMenu": {
+    "title": "Выбор сервера",
+    "play": "Играть",
+    "settings": "Настройки",
+    "logout": "Выйти",
+    "online": "онлайн",
+    "offline": "офлайн",
+    "players": "{{count}} / {{max}} игроков"
+  },
+  "download": {
+    "title": "Обновление",
+    "phase_JAVA": "Загрузка Java...",
+    "phase_ASSETS": "Загрузка ресурсов...",
+    "phase_CLIENT": "Загрузка клиента...",
+    "phase_LAUNCH": "Подготовка запуска...",
+    "cancel": "Отмена",
+    "of": "из"
+  },
+  "running": {
+    "title": "Игра запущена",
+    "console": "Консоль",
+    "terminate": "Завершить",
+    "exitedWith": "Процесс завершился с кодом {{code}}"
+  },
+  "settings": {
+    "title": "Настройки",
+    "ram": "Оперативная память",
+    "ramHint": "МБ (рекомендуется ≥ 2048)",
+    "java": "Версия Java",
+    "flags": "Флаги",
+    "autoEnter": "Авто-вход на сервер",
+    "fullscreen": "Полноэкранный режим",
+    "waylandSupport": "Поддержка Wayland (Linux)",
+    "save": "Сохранить",
+    "saved": "Сохранено!"
+  },
+  "common": {
+    "loading": "Загрузка...",
+    "error": "Ошибка",
+    "back": "Назад",
+    "close": "Закрыть",
+    "retry": "Повторить",
+    "version": "Версия {{v}}"
+  }
+}
