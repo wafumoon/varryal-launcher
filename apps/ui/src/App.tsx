@@ -53,6 +53,29 @@ export function App() {
     return unsub
   }, [accountToken])
 
+  // Fallback for a missed `ready` event (race): when the JRE is already cached the Rust
+  // bootstrap can finish before this UI subscribes, so the `ready` event is never observed and
+  // the Preparing scene would hang forever. While preparing, poll init() — once the Java bridge
+  // answers, advance regardless of whether the `ready` event was caught.
+  useEffect(() => {
+    if (scene.name !== 'preparing') return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    const tick = async () => {
+      try {
+        const initData = await ipc.init()
+        if (cancelled) return
+        setAuthMethods(initData.authMethods)
+        const tok = useAuthStore.getState().accountToken
+        setScene(tok ? { name: 'characters', accountToken: tok } : { name: 'login' })
+      } catch {
+        if (!cancelled) timer = setTimeout(tick, 1500)
+      }
+    }
+    timer = setTimeout(tick, 800)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [scene.name, setAuthMethods])
+
   // When inside Tauri, also call init() to set up auth methods for the bridge.
   // This runs once after bootstrap completes (on login scene enter).
   const initBridge = useCallback(async () => {
