@@ -7,7 +7,7 @@
     "beforeDevCommand": "pnpm --dir ../ui dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm --dir ../ui build",
-    "frontendDist": "../ui/dist"
+    "frontendDist": "../../ui/dist"
   },
   "app": {
     "windows": [
