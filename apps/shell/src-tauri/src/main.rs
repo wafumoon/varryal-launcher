@@ -38,6 +38,14 @@ use tracing_subscriber::EnvFilter;
 const LAUNCHER_JAVA_MAJOR: u32 = 25;
 
 fn main() {
+    // Release builds have no console (windows_subsystem = "windows"), so persist any
+    // startup panic to a crash log for diagnosis.
+    std::panic::set_hook(Box::new(|info| {
+        if let Ok(dir) = paths::varryal_data_dir() {
+            let _ = std::fs::write(dir.join("crash.log"), format!("panic: {info}\n"));
+        }
+    }));
+
     // Initialise logging
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -49,13 +57,9 @@ fn main() {
     info!("Varryal Launcher starting up");
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_opener::init())
-        // Single-instance: when a second instance is launched (e.g. via a varryal:// deep-link
-        // on Windows), its arguments are forwarded to the already-running instance here.
+        // Single-instance MUST be the first plugin (Tauri requirement). When a 2nd instance is
+        // launched (e.g. via a varryal:// deep-link on Windows), its argv is forwarded here.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            // Look for a varryal:// URL in the forwarded arguments and handle it.
             let pending = app.state::<auth::PendingAuthState>();
             for arg in &argv {
                 if arg.starts_with("varryal://auth/callback") {
@@ -64,9 +68,10 @@ fn main() {
                 }
             }
         }))
-        // Deep-link: handles varryal:// URLs when the app is already running (macOS/Linux)
-        // as well as cold-start deep-links (app launched directly by the OS via the scheme).
+        // Deep-link: handles varryal:// URLs (cold-start + already-running).
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(auth::PendingAuthState::new())
         .setup(|app| {
             use tauri_plugin_deep_link::DeepLinkExt;
