@@ -31,4 +31,14 @@ public class BridgeModuleConfig {
      * Version string injected by build pipeline for display purposes.
      */
     public String version = "1.0.0";
+
+    /**
+     * Required by the GravitLauncher module loader: it resolves this static
+     * factory via MethodHandle (`getDefault()Object`) to obtain the default
+     * config instance when no config file exists for this module.
+     * Mirrors GuiModuleConfig.getDefault() in the reference JavaFX runtime.
+     */
+    public static Object getDefault() {
+        return new BridgeModuleConfig();
+    }
 }
