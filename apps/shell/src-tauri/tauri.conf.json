@@ -4,9 +4,9 @@
   "version": "1.0.0",
   "identifier": "ru.varryal.launcher",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm --dir ../ui dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm --dir ../ui build",
     "frontendDist": "../ui/dist"
   },
   "app": {
@@ -37,6 +37,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": false
   }
 }

@@ -142,6 +142,10 @@ jobs:
         working-directory: apps/ui
         run: pnpm build
 
+      - name: Install shell deps (tauri-cli)
+        working-directory: apps/shell
+        run: pnpm install --frozen-lockfile
+
       - name: Tauri build
         working-directory: apps/shell
         run: pnpm tauri build
