@@ -33,28 +33,19 @@ export function App() {
   // startEventForwarding() also kicks off the mock bootstrap sequence in dev.
   useEffect(() => { applyTheme(); startEventForwarding() }, [])
 
-  // Listen to bootstrap_status events from Rust (or mock).
+  // Track bootstrap status for the Preparing UI ONLY. Scene advancement is driven
+  // solely by the init() poll below — so init() (which loads the bridge's auth
+  // methods) ALWAYS runs before we leave Preparing. Otherwise a persisted token
+  // would skip straight to character select with the bridge un-initialised, and
+  // selectAuthMethod would no-op → "not allowed before select authMethod".
   useEffect(() => {
-    const unsub = ipc.listenBootstrapStatus((status) => {
-      setBootstrapStatus(status)
-      if (status.phase === 'ready') {
-        // Bootstrap done — advance to login (or skip straight to characters if
-        // we already have a saved account token from a prior session).
-        if (accountToken) {
-          setScene({ name: 'characters', accountToken })
-        } else {
-          setScene({ name: 'login' })
-        }
-      }
-      // 'error' phase: scene stays 'preparing' so the error UI renders.
-    })
+    const unsub = ipc.listenBootstrapStatus(setBootstrapStatus)
     return unsub
-  }, [accountToken])
+  }, [])
 
-  // Fallback for a missed `ready` event (race): when the JRE is already cached the Rust
-  // bootstrap can finish before this UI subscribes, so the `ready` event is never observed and
-  // the Preparing scene would hang forever. While preparing, poll init() — once the Java bridge
-  // answers, advance regardless of whether the `ready` event was caught.
+  // While preparing, poll init() until the Java bridge answers. Only then advance —
+  // this guarantees the bridge is fully initialised (auth methods loaded) before any
+  // auth call, and also covers a missed `ready` event when the JRE is already cached.
   useEffect(() => {
     if (scene.name !== 'preparing') return
     let cancelled = false
@@ -67,10 +58,10 @@ export function App() {
         const tok = useAuthStore.getState().accountToken
         setScene(tok ? { name: 'characters', accountToken: tok } : { name: 'login' })
       } catch {
-        if (!cancelled) timer = setTimeout(tick, 1500)
+        if (!cancelled) timer = setTimeout(tick, 1200)
       }
     }
-    timer = setTimeout(tick, 800)
+    timer = setTimeout(tick, 400)
     return () => { cancelled = true; clearTimeout(timer) }
   }, [scene.name, setAuthMethods])
 
