@@ -149,7 +149,7 @@ export function CharacterSelect({ accountToken, onSuccess }: CharacterSelectProp
             style={{
               width: '100%', height: 40,
               borderRadius: 'var(--radius-control)',
-              background: 'var(--primary)', color: '#fff',
+              background: 'var(--primary)', color: 'var(--on-primary)',
               fontWeight: 600, fontSize: 14,
               cursor: 'pointer',
             }}

@@ -1,4 +1,4 @@
-import { X, Minus, Square } from 'lucide-react'
+import { X, Minus } from 'lucide-react'
 
 // Lazily import the Tauri window API so the UI still builds and runs in a
 // plain browser / dev-mode without Tauri (calls are no-ops when the module is
@@ -30,11 +30,6 @@ export function Titlebar({ title = 'Varryal Launcher' }: TitlebarProps) {
     await win?.minimize()
   }
 
-  async function toggleMaximize() {
-    const win = await getTauriWindow()
-    await win?.toggleMaximize()
-  }
-
   async function close() {
     const win = await getTauriWindow()
     await win?.close()
@@ -43,7 +38,6 @@ export function Titlebar({ title = 'Varryal Launcher' }: TitlebarProps) {
   const buttons = (
     <div style={{ display: 'flex', gap: 8 }}>
       <WinBtn onClick={minimize} title="Minimise"><Minus size={11} /></WinBtn>
-      <WinBtn onClick={toggleMaximize} title="Maximise"><Square size={11} /></WinBtn>
       <WinBtn onClick={close} title="Close" danger><X size={11} /></WinBtn>
     </div>
   )

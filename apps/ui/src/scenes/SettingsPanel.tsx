@@ -79,7 +79,7 @@ export function SettingsPanel({ profile, onBack }: SettingsPanelProps) {
             height: 34, padding: '0 14px',
             borderRadius: 'var(--radius-control)',
             background: saved ? 'var(--success)' : 'var(--primary)',
-            color: '#fff',
+            color: 'var(--on-primary)',
             display: 'flex', alignItems: 'center', gap: 7,
             fontSize: 13, fontWeight: 500,
             opacity: !dirty || saving ? 0.5 : 1,
@@ -131,7 +131,7 @@ export function SettingsPanel({ profile, onBack }: SettingsPanelProps) {
                     padding: '6px 14px',
                     borderRadius: 'var(--radius-control)',
                     background: profileSettings?.selectedJavaMajor === j.version ? 'var(--primary)' : 'var(--bg-elev-3)',
-                    color: profileSettings?.selectedJavaMajor === j.version ? '#fff' : 'var(--text-mid)',
+                    color: profileSettings?.selectedJavaMajor === j.version ? 'var(--on-primary)' : 'var(--text-mid)',
                     fontSize: 13, fontWeight: 500,
                     border: '1px solid var(--border)',
                   }}

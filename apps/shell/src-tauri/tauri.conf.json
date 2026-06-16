@@ -16,9 +16,8 @@
         "title": "Varryal Launcher",
         "width": 960,
         "height": 620,
-        "minWidth": 800,
-        "minHeight": 540,
-        "resizable": true,
+        "resizable": false,
+        "maximizable": false,
         "decorations": false,
         "transparent": false,
         "center": true

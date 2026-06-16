@@ -1,4 +1,36 @@
-/* Global styles — all values from CSS custom properties set by applyTheme.ts */
+/* Global styles. CSS custom properties are also set at runtime by applyTheme.ts;
+   the :root block below mirrors theme.json so the very first paint is correct
+   (no unstyled flash before React mounts). */
+
+:root {
+  --bg-base: #07090e;
+  --bg-elev-1: #0e1218;
+  --bg-elev-2: #141922;
+  --bg-elev-3: #1c2330;
+  --border: #c9935430;
+  --border-strong: #c9935466;
+  --primary: #f0c982;
+  --primary-hover: #f7d99c;
+  --primary-press: #d9b061;
+  --on-primary: #0a0c11;
+  --accent: #d18948;
+  --rune: #65d4df;
+  --success: #b3dfa6;
+  --warn: #e0a555;
+  --error: #ff9a80;
+  --text-hi: #f5eadb;
+  --text-mid: #c8c2b6;
+  --text-lo: #8a8678;
+  --font-ui: "Montserrat", system-ui, sans-serif;
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-modal: 14px;
+  /* Signature site treatments */
+  --glow-primary: 0 0 0 1px #f0c98238, 0 10px 30px -10px #f0c98259;
+  --hairline: 0 0 0 1px var(--border);
+}
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -13,13 +45,27 @@ html, body, #root {
 }
 
 body {
-  background: var(--bg-base);
+  /* Layered ink with a faint brass top-glow and cool depth at the bottom,
+     echoing the varryal.ru dark-fantasy backdrop. */
+  background:
+    radial-gradient(1100px 620px at 50% -12%, #14110c 0%, transparent 58%),
+    radial-gradient(900px 600px at 92% 112%, #0a0f16 0%, transparent 55%),
+    var(--bg-base);
+  background-attachment: fixed;
   color: var(--text-hi);
   font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   user-select: none;
+}
+
+/* Modal / scene titles use the serif display face (Playfair Display). */
+h1, h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.2px;
 }
 
 ::-webkit-scrollbar { width: 6px; }
@@ -28,7 +74,7 @@ body {
   background: var(--border-strong);
   border-radius: 3px;
 }
-::-webkit-scrollbar-thumb:hover { background: var(--text-lo); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
 button {
   cursor: pointer;

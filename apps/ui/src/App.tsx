@@ -281,7 +281,9 @@ function PreparingScene({
         width: 56, height: 56, borderRadius: 16,
         background: isError ? 'rgba(229,87,92,0.15)' : 'var(--primary)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 28, fontWeight: 700, color: '#fff',
+        fontSize: 28, fontWeight: 700, color: 'var(--on-primary)',
+        fontFamily: 'var(--font-display)',
+        boxShadow: isError ? 'none' : 'var(--glow-primary)',
         marginBottom: 4,
       }}>
         {isError ? <AlertCircle size={28} color="var(--error)" /> : 'V'}

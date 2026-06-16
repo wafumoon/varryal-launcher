@@ -1,29 +1,33 @@
 {
-  "name": "Varryal Dark",
+  "name": "Varryal — Dark Fantasy",
   "colors": {
-    "bgBase":      "#0B0B0C",
-    "bgElev1":     "#141517",
-    "bgElev2":     "#1B1D21",
-    "bgElev3":     "#23262B",
-    "border":      "#2A2D33",
-    "borderStrong":"#3A3E46",
-    "primary":     "#5B8DEF",
-    "primaryHover":"#6E9BF2",
-    "primaryPress":"#4A7CDE",
-    "success":     "#3FB66B",
-    "warn":        "#E0A93B",
-    "error":       "#E5575C",
-    "textHi":      "#F4F4F5",
-    "textMid":     "#A1A1AA",
-    "textLo":      "#6B6F76"
+    "bgBase":       "#07090e",
+    "bgElev1":      "#0e1218",
+    "bgElev2":      "#141922",
+    "bgElev3":      "#1c2330",
+    "border":       "#c9935430",
+    "borderStrong": "#c9935466",
+    "primary":      "#f0c982",
+    "primaryHover": "#f7d99c",
+    "primaryPress": "#d9b061",
+    "onPrimary":    "#0a0c11",
+    "accent":       "#d18948",
+    "rune":         "#65d4df",
+    "success":      "#b3dfa6",
+    "warn":         "#e0a555",
+    "error":        "#ff9a80",
+    "textHi":       "#f5eadb",
+    "textMid":      "#c8c2b6",
+    "textLo":       "#8a8678"
   },
   "font": {
-    "ui":   "Inter, system-ui, sans-serif",
-    "mono": "'JetBrains Mono', 'Fira Mono', monospace"
+    "ui":      "Montserrat, system-ui, sans-serif",
+    "display": "'Playfair Display', Georgia, serif",
+    "mono":    "'JetBrains Mono', ui-monospace, monospace"
   },
   "radius": {
     "control": 8,
     "card":    12,
-    "modal":   16
+    "modal":   14
   }
 }

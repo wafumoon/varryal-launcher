@@ -24,10 +24,6 @@ use crate::paths::varryal_data_dir;
 /// This is the URL published on the official launcher distribution page.
 pub const VARRYAL_JAR_URL: &str = "https://launcher.varryal.ru/Varryal.jar";
 
-/// Re-download the jar if it is older than this many days.
-/// Set to 0 to always re-download, or a large number to effectively never.
-const JAR_MAX_AGE_DAYS: u64 = 7;
-
 // ── Jar resolution + download (F2) ───────────────────────────────────────────
 
 /// Return the path to `Varryal.jar`, downloading it if needed.
@@ -60,24 +56,14 @@ pub async fn resolve_jar(
     let data_dir = varryal_data_dir()?;
     let jar_path = data_dir.join("Varryal.jar");
 
-    let needs_download = if jar_path.exists() {
-        if is_stale(&jar_path) {
-            warn!(
-                "Varryal.jar is older than {JAR_MAX_AGE_DAYS} days — re-downloading from {VARRYAL_JAR_URL}"
-            );
-            true
-        } else {
-            info!("Varryal.jar found at {} (fresh)", jar_path.display());
-            false
-        }
-    } else {
-        info!("Varryal.jar not found — downloading from {VARRYAL_JAR_URL}");
-        true
-    };
-
-    if needs_download {
-        download_jar(&jar_path, cfg).await?;
-    }
+    // Always fetch the current jar. It MUST be byte-identical to the LaunchServer's
+    // signed `updates/Varryal.jar`: Gravit's `checkUpdates` compares the running
+    // jar's digest against the server build and, on mismatch, runs its self-update
+    // path — which tears down the backend executor and breaks profile downloads.
+    // An age-based cache can serve a stale jar after the server rebuilds, so we
+    // refresh it every launch. The JRE stays cached; only this ~10 MB jar is fetched.
+    info!("Fetching current Varryal.jar from {VARRYAL_JAR_URL}");
+    download_jar(&jar_path, cfg).await?;
 
     Ok(jar_path)
 }
@@ -96,19 +82,6 @@ async fn download_jar(dest: &Path, cfg: &mut ShellConfig) -> Result<()> {
     info!("Varryal.jar downloaded, SHA-1 = {sha1}");
     cfg.jar_downloaded_at = Some(unix_timestamp_now());
     Ok(())
-}
-
-/// Return true if `path`'s modification time is older than `JAR_MAX_AGE_DAYS` days.
-fn is_stale(path: &Path) -> bool {
-    match path.metadata().and_then(|m| m.modified()) {
-        Ok(mtime) => {
-            let age = std::time::SystemTime::now()
-                .duration_since(mtime)
-                .unwrap_or_default();
-            age.as_secs() > JAR_MAX_AGE_DAYS * 86_400
-        }
-        Err(_) => true, // If we can't read mtime, treat as stale
-    }
 }
 
 fn unix_timestamp_now() -> String {

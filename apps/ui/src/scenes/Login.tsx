@@ -86,7 +86,9 @@ export function Login({ onSuccess }: LoginProps) {
             justifyContent: 'center',
             fontSize: 28,
             fontWeight: 700,
-            color: '#fff',
+            fontFamily: 'var(--font-display)',
+            color: 'var(--on-primary)',
+            boxShadow: 'var(--glow-primary)',
             marginBottom: 14,
           }}>V</div>
           <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-hi)', margin: 0 }}>
@@ -157,7 +159,8 @@ export function Login({ onSuccess }: LoginProps) {
             marginTop: 22,
             borderRadius: 'var(--radius-control)',
             background: 'var(--primary)',
-            color: '#fff',
+            color: 'var(--on-primary)',
+            boxShadow: submitting ? 'none' : 'var(--glow-primary)',
             fontWeight: 600,
             fontSize: 15,
             display: 'flex',

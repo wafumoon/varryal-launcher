@@ -112,7 +112,8 @@ export function ServerMenu({ onPlay, onSettings, onLogout, onSwitchCharacter }: 
               flex: 1, height: 38,
               borderRadius: 'var(--radius-control)',
               background: 'var(--primary)',
-              color: '#fff',
+              color: 'var(--on-primary)',
+              boxShadow: 'var(--glow-primary)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               fontSize: 14, fontWeight: 600,
             }}
@@ -149,9 +150,10 @@ function ProfileCard({ profile, selected, ping, onClick }: {
       {/* Icon */}
       <div style={{
         width: 40, height: 40, borderRadius: 10,
-        background: 'var(--primary)', opacity: 0.8,
+        background: 'var(--primary)', opacity: 0.85,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 18, fontWeight: 700, color: '#fff', flexShrink: 0,
+        fontFamily: 'var(--font-display)',
+        fontSize: 18, fontWeight: 700, color: 'var(--on-primary)', flexShrink: 0,
       }}>
         {profile.title.charAt(0)}
       </div>
