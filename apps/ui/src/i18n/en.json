@@ -45,6 +45,14 @@
     "switchCharacter": "Switch character",
     "logout": "Sign out"
   },
+  "nav": {
+    "character": "Character",
+    "settings": "Settings",
+    "mods": "Mods",
+    "pickFirst": "Select a character first",
+    "active": "Selected",
+    "noMods": "No optional mods for this server"
+  },
   "download": {
     "title": "Updating",
     "phase_JAVA": "Downloading Java...",

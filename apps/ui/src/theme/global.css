@@ -84,7 +84,18 @@ button {
   border: none;
   outline: none;
   font-family: var(--font-ui);
+  transition: filter 0.15s ease, background 0.15s ease, color 0.15s ease, transform 0.08s ease, box-shadow 0.15s ease;
 }
+button:not(:disabled):hover { filter: brightness(1.07); }
+button:not(:disabled):active { transform: translateY(1px); }
+
+/* Lively bits */
+.vy-tab:not(:disabled):hover { color: var(--text-hi); background: var(--bg-elev-1); }
+.vy-round:not(:disabled):hover { background: var(--bg-elev-3); color: var(--text-hi); }
+.vy-toggle { transition: opacity 0.15s ease; }
+.vy-toggle:hover { opacity: 0.9; }
+.vy-input { transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+.vy-input:focus { box-shadow: 0 0 0 3px rgba(101,212,223,0.14); }
 
 input {
   outline: none;

@@ -14,8 +14,8 @@
     "windows": [
       {
         "title": "Varryal Launcher",
-        "width": 960,
-        "height": 620,
+        "width": 1100,
+        "height": 700,
         "resizable": false,
         "maximizable": false,
         "decorations": false,

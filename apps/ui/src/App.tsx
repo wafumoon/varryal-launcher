@@ -3,10 +3,10 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { applyTheme } from './theme/applyTheme'
 import { Titlebar } from './components/Titlebar'
 import { Login } from './scenes/Login'
-import { CharacterSelect } from './scenes/CharacterSelect'
-import { Home } from './scenes/Home'
+import { Launcher } from './scenes/Launcher'
 import { UpdateProgress } from './scenes/UpdateProgress'
 import { Running } from './scenes/Running'
+import { ParticleField } from './components/ParticleField'
 import { ipc, startEventForwarding } from './ipc/client'
 import { useAuthStore } from './store/auth'
 import { useProfilesStore } from './store/profiles'
@@ -17,8 +17,7 @@ import type { ClientProfile, ClientProfileSettings, BootstrapStatus } from './ip
 type Scene =
   | { name: 'preparing' }
   | { name: 'login' }
-  | { name: 'characters'; accountToken: string }
-  | { name: 'home' }
+  | { name: 'launcher' }
   | { name: 'downloading'; profile: ClientProfile; settings: ClientProfileSettings }
   | { name: 'running'; readyProfileId: string }
 
@@ -56,7 +55,7 @@ export function App() {
         if (cancelled) return
         setAuthMethods(initData.authMethods)
         const tok = useAuthStore.getState().accountToken
-        setScene(tok ? { name: 'characters', accountToken: tok } : { name: 'login' })
+        setScene(tok ? { name: 'launcher' } : { name: 'login' })
       } catch {
         if (!cancelled) timer = setTimeout(tick, 1200)
       }
@@ -85,23 +84,10 @@ export function App() {
   /** Called by Login when web-auth callback delivers the account token. */
   const handleLoginSuccess = useCallback((token: string) => {
     setAccountToken(token)
-    setScene({ name: 'characters', accountToken: token })
+    setScene({ name: 'launcher' })
   }, [setAccountToken])
 
-  /** Called by CharacterSelect after bridge authorize() succeeds. */
-  const goToHome = useCallback(() => setScene({ name: 'home' }), [])
-
-  /** "Сменить персонажа" — go back to character select without re-doing browser login. */
-  const handleSwitchCharacter = useCallback(() => {
-    const token = useAuthStore.getState().accountToken
-    if (token) {
-      setScene({ name: 'characters', accountToken: token })
-    } else {
-      // Token lost (shouldn't happen) — fall back to full login.
-      logout()
-      setScene({ name: 'login' })
-    }
-  }, [logout])
+  const goToLauncher = useCallback(() => setScene({ name: 'launcher' }), [])
 
   const handleLogout = useCallback(() => {
     logout()
@@ -133,7 +119,7 @@ export function App() {
   }, [])
 
   const handleGameExit = useCallback(() => {
-    setScene({ name: 'home' })
+    setScene({ name: 'launcher' })
   }, [])
 
   // ── Retry bootstrap after error ───────────────────────────────────────────
@@ -155,10 +141,13 @@ export function App() {
       height: '100vh',
       background: 'transparent',
       overflow: 'hidden',
+      position: 'relative',
     }}>
-      <Titlebar />
+      <ParticleField />
+      <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+        <Titlebar />
 
-      <AnimatePresence mode="wait">
+        <AnimatePresence mode="wait">
         {/* ── Preparing — bootstrap in progress or error ───────────────── */}
         {scene.name === 'preparing' && (
           <PreparingScene
@@ -174,22 +163,12 @@ export function App() {
         )}
 
         {/* ── Character selection ───────────────────────────────────────── */}
-        {scene.name === 'characters' && (
-          <CharacterSelect
-            key="characters"
-            accountToken={scene.accountToken}
-            onSuccess={goToHome}
-            onRelogin={handleLogout}
-          />
-        )}
-
-        {/* ── Home — single server: play, settings, mods ───────────────── */}
-        {scene.name === 'home' && (
-          <Home
-            key="home"
+        {/* ── Launcher — tabbed: character / settings / mods + play ─────── */}
+        {scene.name === 'launcher' && (
+          <Launcher
+            key="launcher"
             onPlay={handlePlay}
             onLogout={handleLogout}
-            onSwitchCharacter={handleSwitchCharacter}
           />
         )}
 
@@ -199,7 +178,7 @@ export function App() {
             profile={scene.profile}
             settings={scene.settings}
             onComplete={handleDownloadComplete}
-            onBack={goToHome}
+            onBack={goToLauncher}
           />
         )}
 
@@ -211,6 +190,7 @@ export function App() {
           />
         )}
       </AnimatePresence>
+      </div>
     </div>
   )
 }
