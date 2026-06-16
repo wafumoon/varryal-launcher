@@ -1,16 +1,24 @@
-//! JRE provisioning — downloads BellSoft Liberica per OS/arch, extracts, caches.
+//! JRE provisioning — downloads BellSoft Liberica per OS/arch, verifies SHA-1,
+//! extracts and caches.
+//!
 //! Reference: LauncherPrestarter rust/5.7.x download.rs + extract.rs
+//!
+//! F3: SHA-1 is now parsed from the Liberica API response and verified after
+//!     download.  Mismatch → hard error (download is deleted and the error
+//!     propagates to bootstrap).
+//! F4: Uses `paths::varryal_data_dir()` so the JRE cache lives next to the
+//!     config and the IPC handshake, all under %APPDATA%\Varryal (Windows)
+//!     or ~/Varryal (Unix).
 
 use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use tauri::Manager;
 use tracing::{info, warn};
 
 use crate::config::{JreEntry, ShellConfig};
+use crate::paths::varryal_data_dir;
 
 pub struct JreManager<'a> {
-    app: &'a tauri::AppHandle,
     config: &'a mut ShellConfig,
 }
 
@@ -22,11 +30,14 @@ struct LibericaRelease {
     #[serde(rename = "featureVersion")]
     feature_version: u32,
     size: u64,
+    /// SHA-1 hex digest of the archive, as provided by the Liberica API.
+    /// Field name in JSON is "sha1".
+    sha1: Option<String>,
 }
 
 impl<'a> JreManager<'a> {
-    pub fn new(app: &'a tauri::AppHandle, config: &'a mut ShellConfig) -> Self {
-        Self { app, config }
+    pub fn new(config: &'a mut ShellConfig) -> Self {
+        Self { config }
     }
 
     /// Ensure the given Java major version is installed. Returns the JRE root path.
@@ -39,46 +50,88 @@ impl<'a> JreManager<'a> {
             warn!("JRE {major} entry found but path missing — re-downloading");
         }
 
-        let install_path = self.download_and_extract(major).await?;
+        let (install_path, sha1) = self.download_and_extract(major).await?;
         let entry = JreEntry {
             major_version: major,
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             path: install_path.clone(),
-            sha1: String::new(), // sha1 verified during download
-            installed_at: chrono_now(),
+            sha1,
+            installed_at: unix_timestamp_now(),
         };
         self.config.add_or_replace_jre(entry);
         Ok(install_path)
     }
 
-    async fn download_and_extract(&self, major: u32) -> Result<PathBuf> {
+    async fn download_and_extract(&self, major: u32) -> Result<(PathBuf, String)> {
         let (os_str, arch_str, pkg_type) = platform_params()?;
         // BellSoft Liberica API — no JavaFX needed (GUI is Tauri/web)
         let api_url = format!(
-            "https://api.bell-sw.com/v1/liberica/releases?version-modifier=latest&version-feature={major}&bitness=64&os={os_str}&arch={arch_str}&package-type={pkg_type}&bundle-type=jre"
+            "https://api.bell-sw.com/v1/liberica/releases\
+             ?version-modifier=latest\
+             &version-feature={major}\
+             &bitness=64\
+             &os={os_str}\
+             &arch={arch_str}\
+             &package-type={pkg_type}\
+             &bundle-type=jre"
         );
         info!("Fetching JRE {major} metadata from {api_url}");
 
         let client = reqwest::Client::new();
-        let releases: Vec<LibericaRelease> = client.get(&api_url)
-            .send().await.context("Liberica API request failed")?
-            .json().await.context("Liberica API JSON parse failed")?;
+        let releases: Vec<LibericaRelease> = client
+            .get(&api_url)
+            .send()
+            .await
+            .context("Liberica API request failed")?
+            .json()
+            .await
+            .context("Liberica API JSON parse failed")?;
 
-        let release = releases.into_iter().next()
-            .ok_or_else(|| anyhow::anyhow!("No Liberica JRE {major} release found for {os_str}/{arch_str}"))?;
+        let release = releases
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!(
+                "No Liberica JRE {major} release found for {os_str}/{arch_str}"
+            ))?;
 
-        info!("Downloading JRE {} from {}", release.feature_version, release.download_url);
+        info!(
+            "Downloading JRE {} from {} ({} bytes)",
+            release.feature_version, release.download_url, release.size
+        );
 
-        // Destination directory
-        let data_dir = self.app.path().app_data_dir()?;
+        // Destination directory — F4: use canonical varryal_data_dir
+        let data_dir = varryal_data_dir()?;
         let jre_dir = data_dir.join("jre");
         std::fs::create_dir_all(&jre_dir)?;
         let archive_path = jre_dir.join(&release.filename);
 
-        // Download with streaming
-        download_file(&client, &release.download_url, &archive_path).await
+        // Download with streaming, collect SHA-1 digest simultaneously (F3)
+        let computed_sha1 = download_file_with_sha1(&client, &release.download_url, &archive_path)
+            .await
             .context("JRE download failed")?;
+
+        // Verify SHA-1 (F3)
+        if let Some(expected) = &release.sha1 {
+            if !expected.is_empty() {
+                let expected_lower = expected.to_lowercase();
+                let computed_lower = computed_sha1.to_lowercase();
+                if expected_lower != computed_lower {
+                    // Remove the bad download before bailing
+                    let _ = std::fs::remove_file(&archive_path);
+                    anyhow::bail!(
+                        "JRE {major} archive SHA-1 mismatch: \
+                         expected {expected_lower}, got {computed_lower}. \
+                         Download may be corrupt or tampered."
+                    );
+                }
+                info!("JRE {major} SHA-1 verified: {computed_lower}");
+            } else {
+                warn!("JRE {major}: API returned empty sha1 — skipping integrity check");
+            }
+        } else {
+            warn!("JRE {major}: Liberica API did not return sha1 — skipping integrity check");
+        }
 
         // Extract
         let extract_dir = jre_dir.join(format!("java-{major}-{os_str}-{arch_str}"));
@@ -87,8 +140,7 @@ impl<'a> JreManager<'a> {
         }
         std::fs::create_dir_all(&extract_dir)?;
 
-        extract_archive(&archive_path, &extract_dir)
-            .context("JRE extraction failed")?;
+        extract_archive(&archive_path, &extract_dir).context("JRE extraction failed")?;
 
         // Clean up archive
         let _ = std::fs::remove_file(&archive_path);
@@ -96,25 +148,40 @@ impl<'a> JreManager<'a> {
         // Find the actual JRE root (archives typically contain a single top-level dir)
         let jre_root = find_jre_root(&extract_dir)?;
         info!("JRE {major} installed to {}", jre_root.display());
-        Ok(jre_root)
+        Ok((jre_root, computed_sha1))
     }
 }
 
-async fn download_file(client: &reqwest::Client, url: &str, dest: &Path) -> Result<()> {
+// ── Download helper (also used by runner.rs for Varryal.jar) ─────────────────
+
+/// Download `url` to `dest`, streaming the bytes.  Returns the hex-encoded
+/// SHA-1 digest of the downloaded content so callers can verify integrity.
+pub async fn download_file_with_sha1(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+) -> Result<String> {
     use tokio::io::AsyncWriteExt;
     use futures_util::StreamExt;
+    use sha1::{Sha1, Digest};
 
     let response = client.get(url).send().await?.error_for_status()?;
     let mut file = tokio::fs::File::create(dest).await?;
     let mut stream = response.bytes_stream();
+    let mut hasher = Sha1::new();
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
+        hasher.update(&chunk);
         file.write_all(&chunk).await?;
     }
     file.flush().await?;
-    Ok(())
+
+    let digest = hasher.finalize();
+    Ok(hex::encode(digest))
 }
+
+// ── Archive extraction ────────────────────────────────────────────────────────
 
 fn extract_archive(archive: &Path, dest: &Path) -> Result<()> {
     let ext = archive.to_str().unwrap_or("");
@@ -147,6 +214,8 @@ fn find_jre_root(dir: &Path) -> Result<PathBuf> {
     Ok(dir.to_path_buf())
 }
 
+// ── Platform helpers ──────────────────────────────────────────────────────────
+
 fn platform_params() -> Result<(&'static str, &'static str, &'static str)> {
     let os = match std::env::consts::OS {
         "windows" => "windows",
@@ -163,8 +232,7 @@ fn platform_params() -> Result<(&'static str, &'static str, &'static str)> {
     Ok((os, arch, pkg))
 }
 
-fn chrono_now() -> String {
-    // Simple ISO-8601 timestamp without pulling in chrono
+fn unix_timestamp_now() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

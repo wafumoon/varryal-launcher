@@ -321,9 +321,17 @@ public class IpcDispatcher {
 
     private void handleGetUserSettings(WebSocket conn, String id, JsonObject params) {
         String name = params.has("name") ? params.get("name").getAsString() : "";
-        var settings = api.getUserSettings(name, k -> null);
+        // Real signature: getUserSettings(String name, Function<String, UserSettings> factory)
+        // We pass a factory that returns null so no new object is created if no settings exist.
+        Object rawSettings;
+        try {
+            rawSettings = api.getUserSettings(name, k -> null);
+        } catch (Exception e) {
+            sendError(conn, id, "SETTINGS_FAILED", e.getMessage());
+            return;
+        }
         JsonObject result = new JsonObject();
-        result.add("settings", settings != null ? WsBridgeServer.GSON.toJsonTree(settings) : new JsonObject());
+        result.add("settings", rawSettings != null ? WsBridgeServer.GSON.toJsonTree(rawSettings) : new JsonObject());
         sendResult(conn, id, result);
     }
 

@@ -8,9 +8,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::Emitter;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 // ── Handshake types ───────────────────────────────────────────────────────────
 
@@ -20,6 +20,7 @@ pub struct IpcHandshake {
     pub token: String,
     pub pid: u64,
     #[serde(rename = "protocolVersion")]
+    #[allow(dead_code)]
     pub protocol_version: u32,
 }
 
@@ -44,16 +45,12 @@ pub async fn wait_for_handshake(app: &tauri::AppHandle, timeout_secs: u64) -> Re
     }
 }
 
-fn handshake_path(app: &tauri::AppHandle) -> Result<PathBuf> {
-    // The Java bridge writes to %APPDATA%/Varryal/ipc-handshake.json on Windows
-    // Match the Java side: System.getenv("APPDATA") or user.home
-    let base = if cfg!(windows) {
-        std::env::var("APPDATA").map(PathBuf::from)
-            .unwrap_or_else(|_| dirs_next::home_dir().unwrap_or_default())
-    } else {
-        dirs_next::home_dir().unwrap_or_default()
-    };
-    Ok(base.join("Varryal").join("ipc-handshake.json"))
+fn handshake_path(_app: &tauri::AppHandle) -> Result<PathBuf> {
+    // F4: use the canonical varryal_data_dir() so the handshake is read from
+    // the same directory that WsBridgeServer.writeHandshake() writes to:
+    //   Windows → %APPDATA%\Varryal\ipc-handshake.json
+    //   Unix    → ~/Varryal/ipc-handshake.json
+    Ok(crate::paths::varryal_data_dir()?.join("ipc-handshake.json"))
 }
 
 // ── Proxy ─────────────────────────────────────────────────────────────────────
@@ -78,7 +75,7 @@ impl IpcProxy {
     /// Run the proxy loop: forward Tauri invoke calls to Java WS and emit events back.
     pub async fn run(self) {
         let ws_url = format!("ws://127.0.0.1:{}", self.handshake.port);
-        let token = self.handshake.token.clone();
+        let _token = self.handshake.token.clone(); // reserved for event-stream auth
         let app = self.app.clone();
 
         // Persistent WS connection for event streaming
@@ -125,6 +122,9 @@ impl IpcProxy {
 
 // ── Tauri command ──────────────────────────────────────────────────────────────
 
+/// Payload shape for `ipc_request` — matches the JS invoke call signature.
+/// Defined here for documentation; fields are passed individually by Tauri.
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IpcRequestPayload {
     pub method: String,

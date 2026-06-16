@@ -30,20 +30,30 @@ public class WsBridgeServer extends WebSocketServer {
 
     private final String sessionToken;
     private final IpcDispatcher dispatcher;
-    private final int boundPort;
+    // boundPort is only known after onStart() fires (the OS assigns the port on bind).
+    // We use a latch so callers can wait until onStart() has run.
+    private volatile int boundPort = 0;
+    private final CountDownLatch startLatch = new CountDownLatch(1);
 
     public WsBridgeServer(int preferredPort, LauncherBackendAPI api, CountDownLatch shutdownLatch) throws IOException {
-        super(new InetSocketAddress("127.0.0.1", preferredPort == 0 ? findFreePort() : preferredPort));
-        this.boundPort = getPort();
+        // Port 0 → OS picks a free port; it is only known after bind (inside start()).
+        super(new InetSocketAddress("127.0.0.1", preferredPort == 0 ? 0 : preferredPort));
         this.sessionToken = generateToken();
         this.dispatcher = new IpcDispatcher(api, this, sessionToken, shutdownLatch);
 
         setReuseAddr(false);
         setConnectionLostTimeout(60);
+        // Handshake is written in onStart(), after the port is actually bound.
+    }
 
-        // Write handshake file and stdout signal
-        writeHandshake();
-        printHandshakeSignal();
+    /**
+     * Block until the server has bound its port and written the handshake.
+     * Must be called after start(). Throws if the server fails to start within 10 s.
+     */
+    public void awaitStart() throws InterruptedException {
+        if (!startLatch.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+            throw new IllegalStateException("WsBridgeServer did not start within 10 seconds");
+        }
     }
 
     // ── WebSocketServer callbacks ─────────────────────────────────────────────
@@ -72,7 +82,12 @@ public class WsBridgeServer extends WebSocketServer {
 
     @Override
     public void onStart() {
+        // getPort() now returns the real bound port (assigned by OS when preferredPort was 0).
+        this.boundPort = getPort();
         System.out.println("[VarryalBridge] WebSocket server listening on ws://127.0.0.1:" + boundPort);
+        writeHandshake();
+        printHandshakeSignal();
+        startLatch.countDown();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

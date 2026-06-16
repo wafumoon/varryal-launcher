@@ -43,49 +43,112 @@ jobs:
         working-directory: apps/ui
         run: pnpm build
 
-  # ── Tauri shell ────────────────────────────────────────────────────────────
-  tauri:
-    name: Tauri shell (${{ matrix.os }})
-    needs: [bridge, ui]
+  # ── Tauri shell — cargo check (fast gate, all platforms) ──────────────────
+  # Runs before the expensive tauri build to catch Rust errors quickly.
+  # Windows uses the MSVC toolchain (link.exe pre-installed on windows-latest).
+  # macOS and Linux use the stable toolchain for their host.
+  shell-check:
+    name: Shell cargo check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            toolchain: stable-x86_64-pc-windows-msvc
+          - os: macos-latest
+            toolchain: stable
+          - os: ubuntu-latest
+            toolchain: stable
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@master
         with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: pnpm
-          cache-dependency-path: apps/ui/pnpm-lock.yaml
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+          toolchain: ${{ matrix.toolchain }}
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/shell/src-tauri -> target
-      - name: Install Linux deps
+
+      - name: Install Linux system deps
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
             libappindicator3-dev librsvg2-dev patchelf
+
+      - name: cargo check
+        working-directory: apps/shell/src-tauri
+        run: cargo check
+        # DENY_WARNINGS ensures #![deny(warnings)] in main.rs is enforced.
+        # RUSTFLAGS is set explicitly so CI treats warnings as errors even if
+        # the attribute is ever removed from source.
+        env:
+          RUSTFLAGS: "-D warnings"
+
+  # ── Tauri shell — full build (all platforms) ──────────────────────────────
+  tauri:
+    name: Tauri shell (${{ matrix.os }})
+    needs: [bridge, ui, shell-check]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            toolchain: stable-x86_64-pc-windows-msvc
+          - os: macos-latest
+            toolchain: stable
+          - os: ubuntu-latest
+            toolchain: stable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: apps/ui/pnpm-lock.yaml
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/shell/src-tauri -> target
+
+      - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libappindicator3-dev librsvg2-dev patchelf
+
       - name: Install UI deps
         working-directory: apps/ui
         run: pnpm install --frozen-lockfile
+
       - name: Build UI
         working-directory: apps/ui
         run: pnpm build
+
       - name: Tauri build
         working-directory: apps/shell
         run: pnpm tauri build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

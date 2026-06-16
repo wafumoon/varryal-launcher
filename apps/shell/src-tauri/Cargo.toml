@@ -35,6 +35,9 @@ tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures-util = "0.3"
 
+# Error handling
+anyhow = "1"
+
 # Serialisation
 serde       = { version = "1", features = ["derive"] }
 serde_json  = "1"
@@ -47,8 +50,10 @@ flate2 = "1"
 # Platform paths
 dirs-next = "2"
 
-# Hashing (JRE integrity)
+# Hashing (JRE / jar integrity)
+# sha2 kept for potential future use; sha1 used for Liberica archive verification (F3)
 sha2 = "0.10"
+sha1 = { version = "0.10", features = ["oid"] }
 hex  = "0.4"
 
 # UUID generation for session tokens

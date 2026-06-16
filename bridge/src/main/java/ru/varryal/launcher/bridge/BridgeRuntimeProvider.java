@@ -59,6 +59,8 @@ public class BridgeRuntimeProvider implements RuntimeProvider {
         try {
             wsServer = new WsBridgeServer(port, api, shutdownLatch);
             wsServer.start();
+            // Block until onStart() fires and the real port is known / handshake written.
+            wsServer.awaitStart();
         } catch (Exception e) {
             System.err.println("[VarryalBridge] Failed to start WS server: " + e.getMessage());
             e.printStackTrace();

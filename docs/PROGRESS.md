@@ -1,6 +1,6 @@
 # Varryal Launcher — Progress
 
-_Last updated: 2026-06-16_
+_Last updated: 2026-06-16 (production-readiness pass)_
 
 ## Status legend
 - [x] Done / green
@@ -89,9 +89,86 @@ _Last updated: 2026-06-16_
 
 ---
 
+## Phase E — Production-readiness pass (2026-06-16)
+
+- [x] **BUG FIX**: `WsBridgeServer` — port race condition: `boundPort` was read from `getPort()` in
+  the constructor before `start()` bound the socket (returned 0 when port=0 / OS-assigned).
+  Fixed: `boundPort` now set in `onStart()` callback; handshake write moved there too;
+  `awaitStart()` latch added so `BridgeRuntimeProvider.run()` blocks until port is real.
+- [x] **BUG FIX**: `runner.rs` — Java stdout piped but never drained; OS pipe buffer (~64 KiB)
+  would fill and deadlock the Java process during long launcher output.
+  Fixed: `drain_stdout()` helper spawns a background thread to drain stdout line-by-line.
+  `main.rs` updated to call `drain_stdout(&mut child)` immediately after spawn.
+- [x] **BUG FIX**: `IpcDispatcher.getUserSettings` — confirmed real signature is
+  `getUserSettings(String, Function<String,UserSettings>)` (2-arg); code preserved correctly.
+- [x] **MISSING FILE**: `apps/shell/package.json` — required for `pnpm tauri build` in CI. Created.
+- [x] **MISSING FILE**: `apps/shell/src-tauri/capabilities/default.json` — required by Tauri 2
+  security model; without it all `invoke()` calls are denied at runtime. Created with
+  correct permissions for window controls, shell, and opener.
+- [x] **GATE B RE-VERIFIED GREEN**: `gradle build` succeeded after all bridge changes.
+- [x] **GATE C RE-VERIFIED GREEN**: `pnpm build` succeeded (349 kB bundle unchanged).
+
+---
+
+## Phase F — Review pass 2 (2026-06-16, Sonnet)
+
+Closes all F1–F4 findings from REVIEW.md plus the window-controls gap.
+
+- [x] **F4 — Unified data dir**: New `apps/shell/src-tauri/src/paths.rs` exposes
+  `varryal_data_dir()` returning `%APPDATA%\Varryal` (Windows) / `~/Varryal` (Unix).
+  Verified to match `WsBridgeServer.writeHandshake()` exactly.
+  All of `config.rs`, `jre.rs`, `runner.rs`, and `ipc_proxy.rs` now call this
+  helper — `tauri::AppHandle::path().app_data_dir()` (which appends the bundle
+  identifier) is no longer used for any shared path.
+
+- [x] **F1 — Java 25 for launcher**: `main.rs` now provisions `LAUNCHER_JAVA_MAJOR = 25`
+  (was hardcoded 21). The constant is documented at the top of `main.rs`.
+  `ensure_version(major)` remains fully parameterised and multi-version-capable.
+  A TODO comment in `bootstrap()` marks where post-login per-profile provisioning
+  should be added once the IPC proxy is live (stub as per spec).
+
+- [x] **F2 — Varryal.jar download**: `runner.rs` now has `resolve_jar(app, cfg)` (async).
+  `VARRYAL_JAR_URL = "https://launcher.varryal.ru/Varryal.jar"` is a module-level
+  constant. Age-based freshness check: re-download if mtime > `JAR_MAX_AGE_DAYS` (7).
+  Uses `download_file_with_sha1` from `jre.rs` for transport-integrity (digest logged).
+  `cfg.jar_downloaded_at` updated on each download; `cfg.save()` called in bootstrap.
+
+- [x] **F3 — SHA-1 verification**: `LibericaRelease` now includes `sha1: Option<String>`.
+  `download_file_with_sha1()` in `jre.rs` streams bytes through `sha1::Sha1` (RustCrypto)
+  and returns the hex digest. After download, digest is compared to the API value
+  (case-insensitive); mismatch → delete archive + bail with clear error message.
+  Digest is stored in `JreEntry.sha1` in `shell-config.json`.
+  `sha1 = { version = "0.10", features = ["oid"] }` added to `Cargo.toml`.
+  Compiles only in CI (BLOCKER-1 still applies — cargo not local).
+
+- [x] **Window controls**: `Titlebar.tsx` replaced fragile `__TAURI__` cast with a
+  proper `import('@tauri-apps/api/window').getCurrentWindow()` lazy import.
+  `@tauri-apps/api ^2.0.0` (resolved to 2.11.0) added to `apps/ui/package.json`.
+  `capabilities/default.json` now grants:
+  `allow-start-dragging`, `allow-minimize`, `allow-maximize`, `allow-unmaximize`,
+  `allow-toggle-maximize`, `allow-close`.
+  **GATE C RE-VERIFIED GREEN**: `pnpm build` succeeded (350.52 kB + 15.85 kB window chunk).
+
+---
+
+## Phase G — Rust cargo check pass (2026-06-16, Sonnet)
+
+Goal: `cargo check` exits 0 with `#![deny(warnings)]` active.
+
+- [x] **Rust installed**: rustup + stable-x86_64-pc-windows-gnu 1.96.0 via rustup-init.exe
+- [x] **C linker**: MSYS2 + mingw-w64 gcc 16.1.0 installed; `.cargo/config.toml` configures it
+- [x] **`src/lib.rs`**: Created — required by `[lib]` entry in Cargo.toml (Tauri 2 pattern)
+- [x] **`anyhow` crate**: Added to Cargo.toml (was used in all modules but missing from deps)
+- [x] **`icons/`**: Placeholder `icon.ico` + PNGs generated via Python — required by tauri-build
+- [x] **`ipc_proxy.rs`**: Restored `PathBuf` import; `tauri::Manager` → `tauri::Emitter`; removed `debug` import
+- [x] **`jre.rs`**: Removed unused `download_file` convenience wrapper (dead code)
+- [x] **`ipc_proxy.rs`**: `token` → `_token` (unused in event stream loop); `#[allow(dead_code)]` on `protocol_version` and `IpcRequestPayload`
+- [x] **`main.rs`**: Removed unused `tauri::Manager` import; added `#![deny(warnings)]`
+- [x] **GATE D GREEN**: `cargo check` exits 0, zero errors, zero warnings (both `--target x86_64-pc-windows-gnu` and default)
+
 ## Next steps (for Opus)
 1. Deploy bridge jar to LaunchServer, run `build` on server, verify module loads
 2. Confirm Module-Config-Name `VarryalRuntime` is accepted (or rename to `JavaRuntime`)
 3. Test `init → authorize → fetchProfiles` with real server
-4. Install Rust on a build machine, run `tauri build` for Windows
+4. Run `tauri build` on a machine with MSVC Build Tools for the official Windows release
 5. Generate Varryal logo (GPT Image) and replace placeholder monogram

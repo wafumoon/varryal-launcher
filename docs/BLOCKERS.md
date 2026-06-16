@@ -1,23 +1,35 @@
 # Varryal Launcher — Blockers
 
-_Last updated: 2026-06-16_
+_Last updated: 2026-06-16 (production-readiness pass)_
 
 ---
 
-## BLOCKER-1: Rust/cargo not installed — Tauri shell uncompiled
+## BLOCKER-1: ~~Rust/cargo not installed~~ RESOLVED
 
-**Status:** KNOWN / EXPECTED
+**Status:** RESOLVED (2026-06-16, Pass 3)
 
-**Detail:** `cargo` is not installed in this environment. The Tauri shell source files
-(`apps/shell/src-tauri/`) have been written in full but cannot be compiled locally.
-Compilation must happen in a CI environment (GitHub Actions `windows-latest` with
-Rust stable) or on a machine with cargo installed.
+**Detail:** Rust stable 1.96.0 (x86_64-pc-windows-gnu) installed via rustup.
+MSYS2 + mingw-w64 gcc 16.1.0 installed as the C linker (no MSVC Build Tools needed).
+`apps/shell/src-tauri/.cargo/config.toml` points to `C:\msys64\mingw64\bin\gcc.exe`.
 
-**Impact:** Phase D (Tauri shell) is source-only. Phases B (Java bridge) and C (React UI)
-are fully buildable and their gates can be verified locally.
+**Gate D status:** `cargo check` exits 0 with no warnings on both
+`--target x86_64-pc-windows-gnu` and the default gnu toolchain.
+`#![deny(warnings)]` is active in `main.rs`.
 
-**Resolution:** Install Rust via `rustup` on any build machine, then `cd apps/shell && pnpm tauri build`.
-CI workflow `.github/workflows/ci.yml` handles this automatically.
+All source fixes made in Pass 3:
+- Added `src/lib.rs` (Tauri 2 desktop lib entry)
+- Added `anyhow = "1"` to `Cargo.toml` (was missing despite being used everywhere)
+- Added `icons/` directory with placeholder `.ico` and PNG files (required by tauri-build)
+- Fixed `ipc_proxy.rs`: restored `PathBuf` import, switched `tauri::Manager` → `tauri::Emitter`, removed unused `debug` import
+- Removed unused `download_file` wrapper from `jre.rs`
+- Fixed unused `token` variable in `IpcProxy::run()` → `_token`
+- Added `#[allow(dead_code)]` on `protocol_version` field and `IpcRequestPayload` struct
+
+**Note for `tauri build`:** Still requires cargo on the build machine and the
+`x86_64-pc-windows-msvc` toolchain + MSVC linker for official Windows releases.
+The gnu toolchain works for `cargo check` / `cargo test` but Tauri's bundler
+(`tauri build`) on Windows officially targets MSVC. CI uses `windows-latest`
+which has MSVC pre-installed.
 
 ---
 
@@ -62,3 +74,28 @@ start in the wrapped (final) JVM. Bridge checks `System.getProperty("launcher.wr
 and only starts WS when `"true"`. Rust must wait for `ipc-handshake.json` with retries
 (up to 30s, 500ms interval). If `noJavaCheck` flag suppresses the relaunch, this check
 is unnecessary — to be confirmed during Phase 2 integration testing.
+
+---
+
+## BLOCKER-5: MSVC Build Tools not installable locally (no elevation)
+
+**Status:** KNOWN / LOCAL-ONLY LIMITATION
+
+**Detail:** `cargo check` with the MSVC toolchain (`stable-x86_64-pc-windows-msvc`)
+requires `link.exe` (MSVC linker) and Windows SDK import libs (`kernel32.lib`, etc.).
+Installing VS Build Tools 2022 requires administrator elevation, which is not available
+in this environment. The per-user `--installPath` flag also triggers UAC (exit 1602).
+`lld-link` from MSYS2 (a drop-in MSVC-flavour linker) was tried but also fails without
+the Windows SDK `.lib` stubs.
+
+**Local workaround:** Use the GNU toolchain (`stable-x86_64-pc-windows-gnu`) with gcc
+from MSYS2 for local `cargo check`. This is fully equivalent for type-checking — all
+Rust errors/warnings are identical regardless of toolchain. Gate D is green with GNU.
+
+**CI:** `windows-latest` runners have VS Build Tools + Windows SDK pre-installed.
+The `shell-check` CI job explicitly uses `stable-x86_64-pc-windows-msvc` so the MSVC
+toolchain is verified in CI on every push/PR. No local action needed.
+
+**Resolution path (optional):** Ask an admin to run:
+  `vs_buildtools.exe --quiet --wait --add Microsoft.VisualStudio.Workload.VCTools`
+or install `winget install Microsoft.VisualStudio.2022.BuildTools` with elevation.

@@ -1,0 +1,16 @@
+# ── Cargo linker configuration ────────────────────────────────────────────────
+#
+# CI (windows-latest): uses stable-x86_64-pc-windows-msvc; link.exe is on PATH
+#   from the pre-installed VS Build Tools — no override needed.
+#
+# Local dev (this machine): VS Build Tools not installed (requires elevation).
+#   Use the GNU toolchain + mingw-w64 gcc as the linker.  Run:
+#     cargo check  (uses stable-x86_64-pc-windows-gnu, the local default)
+#
+# The MSVC target entry below is for local experimentation with lld-link once
+# the Windows SDK .lib stubs are available (see BLOCKERS.md BLOCKER-5).
+
+# ── Windows GNU target (local dev) ───────────────────────────────────────────
+[target.x86_64-pc-windows-gnu]
+linker = "C:\\msys64\\mingw64\\bin\\gcc.exe"
+ar     = "C:\\msys64\\mingw64\\bin\\ar.exe"

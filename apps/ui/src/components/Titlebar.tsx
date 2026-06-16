@@ -1,7 +1,19 @@
 import { X, Minus, Square } from 'lucide-react'
 
-// Detect platform via Tauri API or user-agent fallback
-function isMac() {
+// Lazily import the Tauri window API so the UI still builds and runs in a
+// plain browser / dev-mode without Tauri (calls are no-ops when the module is
+// absent — e.g. during `pnpm build` Gate C which has no Tauri runtime).
+async function getTauriWindow() {
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    return getCurrentWindow()
+  } catch {
+    return null
+  }
+}
+
+// Detect macOS for button placement (left vs. right)
+function isMac(): boolean {
   if (typeof navigator !== 'undefined') return navigator.platform.startsWith('Mac')
   return false
 }
@@ -14,36 +26,24 @@ export function Titlebar({ title = 'Varryal Launcher' }: TitlebarProps) {
   const mac = isMac()
 
   async function minimize() {
-    try {
-      const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as {
-        window: { getCurrentWindow: () => { minimize: () => Promise<void> } }
-      } | undefined
-      await tauri?.window.getCurrentWindow().minimize()
-    } catch { /* dev mode */ }
+    const win = await getTauriWindow()
+    await win?.minimize()
   }
 
-  async function maximize() {
-    try {
-      const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as {
-        window: { getCurrentWindow: () => { toggleMaximize: () => Promise<void> } }
-      } | undefined
-      await tauri?.window.getCurrentWindow().toggleMaximize()
-    } catch { /* dev mode */ }
+  async function toggleMaximize() {
+    const win = await getTauriWindow()
+    await win?.toggleMaximize()
   }
 
   async function close() {
-    try {
-      const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as {
-        window: { getCurrentWindow: () => { close: () => Promise<void> } }
-      } | undefined
-      await tauri?.window.getCurrentWindow().close()
-    } catch { /* dev mode */ }
+    const win = await getTauriWindow()
+    await win?.close()
   }
 
   const buttons = (
     <div style={{ display: 'flex', gap: 8 }}>
       <WinBtn onClick={minimize} title="Minimise"><Minus size={11} /></WinBtn>
-      <WinBtn onClick={maximize} title="Maximise"><Square size={11} /></WinBtn>
+      <WinBtn onClick={toggleMaximize} title="Maximise"><Square size={11} /></WinBtn>
       <WinBtn onClick={close} title="Close" danger><X size={11} /></WinBtn>
     </div>
   )

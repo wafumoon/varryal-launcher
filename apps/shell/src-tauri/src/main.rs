@@ -6,23 +6,42 @@
 //! 3. WebSocket client to Java BridgeRuntimeProvider
 //! 4. Proxy IPC between Tauri frontend (invoke/emit) and Java WS
 //! 5. Frameless window, auto-updater
+//!
+//! F1: The launcher JRE is now Java 25 (matching the live varryal_main profile's
+//!     minJavaVersion:25).  After profiles are fetched, each profile's required
+//!     Java major should be provisioned too — see the TODO in bootstrap() below.
 
 // Prevent a console window from opening on Windows in release mode
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Treat all warnings as errors so CI catches regressions.
+#![deny(warnings)]
 
 mod config;
 mod jre;
+mod paths;
 mod runner;
 mod ipc_proxy;
 
-use tauri::Manager;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+
+/// Java major version used to run the launcher jar itself.
+///
+/// Set to 25 to match the live Varryal profile (`minJavaVersion:25`).
+/// If a future profile requires a higher version, bump this constant
+/// (and `ensure_version` will provision that version automatically).
+///
+/// The Java version used to run each GAME is resolved by the GravitLauncher
+/// core from the profile — the launcher JRE just needs to be compatible.
+const LAUNCHER_JAVA_MAJOR: u32 = 25;
 
 fn main() {
     // Initialise logging
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("varryal=debug".parse().unwrap()))
+        .with_env_filter(
+            EnvFilter::from_default_env()
+                .add_directive("varryal=debug".parse().unwrap()),
+        )
         .init();
 
     info!("Varryal Launcher starting up");
@@ -53,33 +72,55 @@ fn main() {
 async fn bootstrap(app: tauri::AppHandle) -> anyhow::Result<()> {
     use crate::config::ShellConfig;
     use crate::jre::JreManager;
-    use crate::runner::launch_jar;
+    use crate::runner::{launch_jar, resolve_jar};
     use crate::ipc_proxy::IpcProxy;
 
-    // Load / create shell config
-    let mut cfg = ShellConfig::load(&app)?;
+    // Load / create shell config (F4: config lives in varryal_data_dir, no app handle needed)
+    let mut cfg = ShellConfig::load()?;
 
-    // Provision JRE (launcher needs Java 21+; profile may need 25)
-    let jre_mgr = JreManager::new(&app, &mut cfg);
-    let launcher_jre = jre_mgr.ensure_version(21).await?;
-    info!("Launcher JRE: {}", launcher_jre.display());
+    // ── F1: Provision the launcher JRE (Java 25) ─────────────────────────────
+    //
+    // The live varryal_main profile requires minJavaVersion:25. Using Java 25
+    // for the launcher process guarantees the GravitLauncher core can start and
+    // pass compatibility checks for that profile.  `ensure_version` is already
+    // multi-version-capable; adding a second call for Java 21 would provision a
+    // second JRE alongside it for older profiles.
+    //
+    // TODO (post-login): After `fetchProfiles` returns, read each profile's
+    //   minJavaVersion and call `jre_mgr.ensure_version(profile_min_java)` for
+    //   any version not already cached.  This requires the IPC proxy to be up,
+    //   so it is done in a separate task after bootstrap.  The profile field
+    //   mapping in IpcDispatcher.java already serialises `minJavaVersion` in
+    //   the ClientProfile JSON — the frontend store should forward it here via
+    //   a dedicated Tauri command (e.g. `ensure_jre_for_profile`).
+    let mut jre_mgr = JreManager::new(&mut cfg);
+    let launcher_jre = jre_mgr.ensure_version(LAUNCHER_JAVA_MAJOR).await?;
+    info!("Launcher JRE (Java {LAUNCHER_JAVA_MAJOR}): {}", launcher_jre.display());
 
     // Save config with updated JRE entry
-    cfg.save(&app)?;
+    cfg.save()?;
 
-    // Find the launcher jar (bundled as resource or downloaded)
-    let jar_path = crate::runner::resolve_jar(&app)?;
+    // ── F2: Resolve / download Varryal.jar ───────────────────────────────────
+    let jar_path = resolve_jar(&app, &mut cfg).await?;
     info!("Launcher jar: {}", jar_path.display());
 
-    // Spawn Java process
-    let java_exe = launcher_jre.join("bin").join(if cfg!(windows) { "javaw.exe" } else { "java" });
-    let _child = launch_jar(&java_exe, &jar_path)?;
+    // Persist updated jar_downloaded_at timestamp
+    cfg.save()?;
 
-    // Wait for ipc-handshake.json (written by BridgeRuntimeProvider)
+    // ── Spawn Java process ───────────────────────────────────────────────────
+    let java_exe = launcher_jre
+        .join("bin")
+        .join(if cfg!(windows) { "javaw.exe" } else { "java" });
+    let mut child = launch_jar(&java_exe, &jar_path)?;
+    // Drain stdout in a background thread to prevent pipe-buffer deadlock.
+    crate::runner::drain_stdout(&mut child);
+    let _child = child; // keep handle alive so the process is not killed on drop
+
+    // ── Wait for IPC handshake ───────────────────────────────────────────────
     let handshake = ipc_proxy::wait_for_handshake(&app, 30).await?;
     info!("IPC handshake: port={} pid={}", handshake.port, handshake.pid);
 
-    // Connect WebSocket and start proxying
+    // ── Connect WebSocket and start proxying ─────────────────────────────────
     let proxy = IpcProxy::connect(handshake, app.clone()).await?;
     proxy.run().await;
 
