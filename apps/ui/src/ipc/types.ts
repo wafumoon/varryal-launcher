@@ -188,6 +188,7 @@ export interface BootstrapStatus {
 // ── Portal API — characters ───────────────────────────────────────────────────
 
 export interface CharacterRace {
+  key?: string
   name: string
 }
 
@@ -196,11 +197,18 @@ export interface Character {
   id: string
   generatedNickname: string
   minecraftUuid: string
+  /** In-world display name + surname (optional). */
+  name?: string
+  surname?: string | null
   race: CharacterRace
   /** Short race/class alias shown under the name (e.g. "warrior"). */
   alias: string
-  /** URL to a skin preview image (may be empty string). */
+  /** URL to a pre-rendered skin preview image (may be empty string). */
   skinPreviewUrl: string
+  /** URL to the raw Minecraft skin PNG — fed to the 3D viewer via portal_fetch_skin. */
+  skinUrl?: string
+  /** Skin model arm width. */
+  skinModel?: 'classic' | 'slim'
 }
 
 /** Shape of the portal GET /launcher/me/characters response. */

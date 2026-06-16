@@ -124,6 +124,7 @@ fn main() {
             portal::portal_list_characters,
             portal::portal_create_session,
             portal::portal_login,
+            portal::portal_fetch_skin,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

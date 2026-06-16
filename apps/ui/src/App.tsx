@@ -4,10 +4,9 @@ import { applyTheme } from './theme/applyTheme'
 import { Titlebar } from './components/Titlebar'
 import { Login } from './scenes/Login'
 import { CharacterSelect } from './scenes/CharacterSelect'
-import { ServerMenu } from './scenes/ServerMenu'
+import { Home } from './scenes/Home'
 import { UpdateProgress } from './scenes/UpdateProgress'
 import { Running } from './scenes/Running'
-import { SettingsPanel } from './scenes/SettingsPanel'
 import { ipc, startEventForwarding } from './ipc/client'
 import { useAuthStore } from './store/auth'
 import { useProfilesStore } from './store/profiles'
@@ -19,8 +18,7 @@ type Scene =
   | { name: 'preparing' }
   | { name: 'login' }
   | { name: 'characters'; accountToken: string }
-  | { name: 'server-menu' }
-  | { name: 'settings'; profile: ClientProfile }
+  | { name: 'home' }
   | { name: 'downloading'; profile: ClientProfile; settings: ClientProfileSettings }
   | { name: 'running'; readyProfileId: string }
 
@@ -100,7 +98,7 @@ export function App() {
   }, [setAccountToken])
 
   /** Called by CharacterSelect after bridge authorize() succeeds. */
-  const goToServerMenu = useCallback(() => setScene({ name: 'server-menu' }), [])
+  const goToHome = useCallback(() => setScene({ name: 'home' }), [])
 
   /** "Сменить персонажа" — go back to character select without re-doing browser login. */
   const handleSwitchCharacter = useCallback(() => {
@@ -139,16 +137,12 @@ export function App() {
     setScene({ name: 'downloading', profile, settings })
   }, [profileSettings, selectProfile])
 
-  const handleSettings = useCallback((profile: ClientProfile) => {
-    setScene({ name: 'settings', profile })
-  }, [])
-
   const handleDownloadComplete = useCallback((readyProfileId: string) => {
     setScene({ name: 'running', readyProfileId })
   }, [])
 
   const handleGameExit = useCallback(() => {
-    setScene({ name: 'server-menu' })
+    setScene({ name: 'home' })
   }, [])
 
   // ── Retry bootstrap after error ───────────────────────────────────────────
@@ -193,27 +187,18 @@ export function App() {
           <CharacterSelect
             key="characters"
             accountToken={scene.accountToken}
-            onSuccess={goToServerMenu}
+            onSuccess={goToHome}
             onRelogin={handleLogout}
           />
         )}
 
-        {/* ── Server menu ───────────────────────────────────────────────── */}
-        {scene.name === 'server-menu' && (
-          <ServerMenu
-            key="server-menu"
+        {/* ── Home — single server: play, settings, mods ───────────────── */}
+        {scene.name === 'home' && (
+          <Home
+            key="home"
             onPlay={handlePlay}
-            onSettings={handleSettings}
             onLogout={handleLogout}
             onSwitchCharacter={handleSwitchCharacter}
-          />
-        )}
-
-        {scene.name === 'settings' && (
-          <SettingsPanel
-            key="settings"
-            profile={scene.profile}
-            onBack={goToServerMenu}
           />
         )}
 
@@ -223,7 +208,7 @@ export function App() {
             profile={scene.profile}
             settings={scene.settings}
             onComplete={handleDownloadComplete}
-            onBack={goToServerMenu}
+            onBack={goToHome}
           />
         )}
 

@@ -124,6 +124,40 @@ pub async fn portal_login(email: String, password: String) -> Result<Value, Stri
     serde_json::from_str::<Value>(&body).map_err(|e| format!("Failed to parse response: {e}"))
 }
 
+/// Fetch a Minecraft skin PNG and return it as a base64 `data:` URL.
+///
+/// The skin endpoint (`/api/skins/<uuid>.png`) answers with a 302 redirect and
+/// no `Access-Control-Allow-Origin` header, so loading it cross-origin into a
+/// WebGL texture (skinview3d) taints the canvas. Fetching here (reqwest follows
+/// the redirect, no CORS) and handing back a same-origin data URL avoids that.
+#[command]
+pub async fn portal_fetch_skin(url: String) -> Result<String, String> {
+    use base64::Engine as _;
+    info!("portal_fetch_skin: GET {url}");
+    let client = build_client()?;
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("HTTP {status}"));
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/png")
+        .to_string();
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Read failed: {e}"))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{content_type};base64,{b64}"))
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn build_client() -> Result<reqwest::Client, String> {

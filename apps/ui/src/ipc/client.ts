@@ -200,6 +200,12 @@ export const ipc = {
   createSession: (accountToken: string, characterId: string) =>
     invokeNative<CreateSessionResponse>('portal_create_session', { accountToken, characterId }),
 
+  /**
+   * Fetch a Minecraft skin as a base64 data URL (via Rust — CORS-safe) so the
+   * 3D skin viewer (WebGL) can use it as a texture. Returns the data URL string.
+   */
+  fetchSkin: (url: string) => invokeNative<string>('portal_fetch_skin', { url }),
+
   // ── Bridge IPC (proxied through Java WS) ──────────────────────────────────
 
   init: () => request<InitResult>('init'),
@@ -269,6 +275,9 @@ async function mockRequest<T>(method: string, params: Record<string, unknown>): 
     }
 
     // ── Portal API mocks ──────────────────────────────────────────────────────
+    case 'portal_fetch_skin':
+      return '/default-skin.png' as T
+
     case 'portal_login': {
       const { email } = params as { email: string }
       return {
@@ -286,17 +295,23 @@ async function mockRequest<T>(method: string, params: Record<string, unknown>): 
             id: 'char-uuid-1',
             generatedNickname: 'ShadowElf_7291',
             minecraftUuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-            race: { name: 'Эльф' },
-            alias: 'elf',
+            name: 'Уголёк',
+            race: { key: 'elf', name: 'Эльф' },
+            alias: 'Следопыт',
             skinPreviewUrl: '',
+            skinUrl: '/default-skin.png',
+            skinModel: 'classic',
           },
           {
             id: 'char-uuid-2',
             generatedNickname: 'IronDwarf_4418',
             minecraftUuid: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
-            race: { name: 'Гном' },
-            alias: 'dwarf',
+            name: 'Грим',
+            race: { key: 'dwarf', name: 'Гном' },
+            alias: 'Кузнец',
             skinPreviewUrl: '',
+            skinUrl: '/default-skin.png',
+            skinModel: 'classic',
           },
         ],
       } as T
@@ -320,6 +335,9 @@ async function mockRequest<T>(method: string, params: Record<string, unknown>): 
 
     case 'tryAuthorize':
       return { user: null } as T
+
+    case 'selectAuthMethod':
+      return {} as T
 
     case 'authorize': {
       const { login } = params as { login: string }

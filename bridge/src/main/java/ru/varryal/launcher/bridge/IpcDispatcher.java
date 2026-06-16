@@ -442,6 +442,15 @@ public class IpcDispatcher {
             o.addProperty("selectedJavaMajor", java.getMajorVersion());
             o.addProperty("selectedJavaPath", java.getPath() != null ? java.getPath().toString() : "");
         }
+        // Currently-enabled optional mods (names) — drives the UI toggles' initial state.
+        JsonArray enabledOptionals = new JsonArray();
+        try {
+            var enabled = s.getEnabledOptionals();
+            if (enabled != null) {
+                for (ProfileFeatureAPI.OptionalMod m : enabled) enabledOptionals.add(m.getName());
+            }
+        } catch (Exception ignored) {}
+        o.add("enabledOptionals", enabledOptionals);
         return o;
     }
 
@@ -472,6 +481,21 @@ public class IpcDispatcher {
                 if (flags.has(f.name())) {
                     if (flags.get(f.name()).getAsBoolean()) settings.addFlag(f);
                     else settings.removeFlag(f);
+                }
+            }
+        }
+        // Optional mods: enable exactly the names the UI toggled on, disable the rest.
+        if (json.has("enabledOptionals")) {
+            java.util.Set<String> wanted = new java.util.HashSet<>();
+            for (var el : json.getAsJsonArray("enabledOptionals")) wanted.add(el.getAsString());
+            var all = settings.getAllOptionals();
+            if (all != null) {
+                for (ProfileFeatureAPI.OptionalMod mod : all) {
+                    if (wanted.contains(mod.getName())) {
+                        settings.enableOptional(mod, (m, e) -> {});
+                    } else {
+                        settings.disableOptional(mod, (m, e) -> {});
+                    }
                 }
             }
         }

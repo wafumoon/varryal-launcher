@@ -26,7 +26,8 @@
     "subtitle": "Choose who to play as",
     "authorizing": "Signing in as character…",
     "empty": "No characters found. Create one on the website.",
-    "relogin": "Sign in with another account"
+    "relogin": "Sign in with another account",
+    "enter": "Play as this character"
   },
   "serverMenu": {
     "title": "Select server",
@@ -37,6 +38,12 @@
     "online": "online",
     "offline": "offline",
     "players": "{{count}} / {{max}} players"
+  },
+  "home": {
+    "play": "PLAY",
+    "mods": "Optional mods",
+    "switchCharacter": "Switch character",
+    "logout": "Sign out"
   },
   "download": {
     "title": "Updating",
