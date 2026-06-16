@@ -71,6 +71,9 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
     setAuthorizing(true); setError(null)
     try {
       const session = await ipc.createSession(accountToken, char.id)
+      // Clear any prior bridge session (e.g. after the game exited/crashed) so
+      // re-authorizing a character doesn't fail with "You are already logged in".
+      await ipc.userExit().catch(() => {})
       await ipc.selectAuthMethod('std')
       const authRes = await ipc.authorize('', session.minecraftAccessToken)
       setUser(authRes.user)
