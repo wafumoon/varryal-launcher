@@ -8,7 +8,10 @@ import pro.gravit.launcher.core.api.LauncherAPIHolder;
 import pro.gravit.launcher.core.api.features.ProfileFeatureAPI;
 import pro.gravit.launcher.core.api.method.AuthMethod;
 import pro.gravit.launcher.core.api.method.AuthMethodPassword;
-import pro.gravit.launcher.core.api.method.password.AuthPlainPassword;
+import pro.gravit.launcher.base.Launcher;
+import pro.gravit.launcher.base.request.auth.password.AuthAESPassword;
+import pro.gravit.launcher.base.request.auth.password.AuthPlainPassword;
+import pro.gravit.utils.helper.SecurityHelper;
 import pro.gravit.launcher.core.api.model.SelfUser;
 import pro.gravit.launcher.core.backend.LauncherBackendAPI;
 import pro.gravit.launcher.core.backend.LauncherBackendAPIHolder;
@@ -168,13 +171,31 @@ public class IpcDispatcher {
     private void handleAuthorize(WebSocket conn, String id, JsonObject params) {
         String login = params.has("login") ? params.get("login").getAsString() : "";
         String password = params.has("password") ? params.get("password").getAsString() : "";
-        AuthMethodPassword authPassword = new AuthPlainPassword(password);
+        AuthMethodPassword authPassword = makePassword(password);
         api.authorize(login, authPassword).whenComplete((user, err) -> {
             if (err != null) { sendError(conn, id, "AUTH_FAILED", err.getMessage()); return; }
             JsonObject result = new JsonObject();
             result.add("user", serializeUserStatic(user));
             sendResult(conn, id, result);
         });
+    }
+
+    /**
+     * Build the password object exactly like the reference JavaFX AuthService:
+     * AES-encrypt with the injected passwordEncryptKey when present, else plain.
+     * Crucially uses base.request.auth.password.* (the wire-protocol types the
+     * LaunchServer expects), NOT core.api.method.password.* — the latter is not
+     * recognised on the wire and yields a false "wrong password".
+     */
+    private AuthMethodPassword makePassword(String plainPassword) {
+        String key = Launcher.getConfig().passwordEncryptKey;
+        if (key != null) {
+            try {
+                return new AuthAESPassword(SecurityHelper.encrypt(key, plainPassword));
+            } catch (Exception ignored) {
+            }
+        }
+        return new AuthPlainPassword(plainPassword);
     }
 
     private void handleUserExit(WebSocket conn, String id) {
