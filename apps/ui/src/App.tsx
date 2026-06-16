@@ -7,7 +7,7 @@ import { ServerMenu } from './scenes/ServerMenu'
 import { UpdateProgress } from './scenes/UpdateProgress'
 import { Running } from './scenes/Running'
 import { SettingsPanel } from './scenes/SettingsPanel'
-import { ipc } from './ipc/client'
+import { ipc, startEventForwarding } from './ipc/client'
 import { useAuthStore } from './store/auth'
 import { useProfilesStore } from './store/profiles'
 import { useSettingsStore } from './store/settings'
@@ -27,8 +27,8 @@ export function App() {
   const { selectProfile } = useProfilesStore()
   const { profileSettings } = useSettingsStore()
 
-  // Apply theme on mount
-  useEffect(() => { applyTheme() }, [])
+  // Apply theme + start Java-bridge event forwarding on mount
+  useEffect(() => { applyTheme(); startEventForwarding() }, [])
 
   // Bootstrap: call init(), then try to restore session
   useEffect(() => {

@@ -112,6 +112,22 @@ export function listenTauriEvent<T>(
   return onEvent(channel, name, (data) => handler(data as unknown as T))
 }
 
+// ── Java-bridge event forwarding (real Tauri mode) ────────────────────────────
+
+// The Rust proxy emits a Tauri event `ipc_event` for every Java-bridge event
+// ({ type, channel, name, data }). Forward those into the local dispatchEvent
+// registry that scenes subscribe to via onEvent(). No-op in mock mode (mock calls
+// dispatchEvent directly).
+let eventForwardingStarted = false
+export function startEventForwarding(): void {
+  if (eventForwardingStarted || !isTauri) return
+  eventForwardingStarted = true
+  void getTauri().event.listen('ipc_event', (e: { payload: unknown }) => {
+    const v = e.payload as { channel?: string; name?: string; data?: Record<string, unknown> }
+    if (v && v.channel && v.name) dispatchEvent(v.channel, v.name, v.data ?? {})
+  })
+}
+
 // ── Typed API surface ─────────────────────────────────────────────────────────
 
 export const ipc = {
