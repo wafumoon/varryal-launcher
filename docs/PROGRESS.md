@@ -227,9 +227,100 @@ callback delivers the token to the launcher without any user input in the UI.
 
 ---
 
+---
+
+## Phase I — Auth/character UX redesign (2026-06-16)
+
+Replaces the old "web-auth delivers per-character minecraft token → authorize immediately"
+flow with the new two-stage flow:
+
+```
+[preparing]  Rust emits bootstrap_status events → UI shows phase + progress bar
+             Login button is BLOCKED until phase = "ready"
+[login]      "Войти через Varryal" → browser → account login → varryal://auth/callback
+             token = ACCOUNT token (Bearer for /launcher/me/*); stored in auth store
+             No ipc.authorize() call here anymore
+[characters] CharacterSelect.tsx: GET /launcher/me/characters (Bearer account token)
+             → native list (nickname / race / skin preview)
+             Player picks → POST /launcher/me/characters/{id}/session
+             → minecraftAccessToken → ipc.selectAuthMethod('std') + ipc.authorize('', token)
+             → server menu
+[server-menu] New "Сменить персонажа" button (UserCog icon) → re-enter CharacterSelect
+             with stored accountToken; no browser, no new web-auth
+```
+
+### Rust (`apps/shell/src-tauri`)
+
+- [x] **`src/portal.rs`** (new): two `#[tauri::command]`s using existing `reqwest` dep:
+  - `portal_list_characters(account_token)` → GET `https://varryal.ru/api/launcher/me/characters`
+  - `portal_create_session(account_token, character_id)` → POST `.../characters/{id}/session`
+  - Both registered in `invoke_handler`; account token passed per-call (no Rust state).
+- [x] **`src/main.rs`**: added `mod portal`; registered `portal_list_characters` and
+  `portal_create_session` in `invoke_handler`; added `BootstrapStatus` struct and
+  `emit_bootstrap()` helper; `bootstrap()` now emits `bootstrap_status` events at each
+  phase: `jre` (0 %), `jar` (30 %), `starting` (60 %), `connecting` (80 %), `ready` (100 %),
+  `error` (on `Err`). Login is unreachable until `ready` fires.
+- [x] **`src/lib.rs`**: added `pub mod portal`.
+
+### Frontend (`apps/ui/src`)
+
+- [x] **`ipc/types.ts`**: added `BootstrapStatus`, `CharacterRace`, `Character`,
+  `ListCharactersResponse`, `CreateSessionResponse`.  `WebAuthResult.token` comment
+  updated: token is now the account token, not a minecraft token.
+- [x] **`ipc/client.ts`**: added `ipc.listenBootstrapStatus()` (listens to `bootstrap_status`
+  Tauri event); `ipc.listCharacters(accountToken)` and `ipc.createSession(accountToken, characterId)`
+  (native invoke wrappers for the new Rust commands); mock cases for
+  `portal_list_characters` (2 fake characters), `portal_create_session` (fake mc token),
+  `bootstrap_status_start` (emits full phase sequence ending in `ready` after ~1.5 s);
+  `startEventForwarding()` triggers mock bootstrap in dev mode.
+- [x] **`store/auth.ts`**: added `accountToken: string | null` field and `setAccountToken()`
+  action; `logout()` clears it.
+- [x] **`scenes/CharacterSelect.tsx`** (new): on enter loads character list via
+  `ipc.listCharacters`; renders character cards (nickname, race, skin preview with
+  pixelated img or User icon placeholder); on pick calls `ipc.createSession` → mints
+  `minecraftAccessToken` → `ipc.selectAuthMethod('std')` + `ipc.authorize('', token)` →
+  `setUser` → `onSuccess`. Loading / authorizing / error / retry states.
+- [x] **`scenes/Login.tsx`**: `onSuccess` prop changed to `(accountToken: string) => void`;
+  on `web_auth_result` stores token via `setAccountToken` and calls `onSuccess(token)` —
+  no `ipc.authorize()` call here. Removed `'authorizing'` phase (authorize moved to
+  CharacterSelect). `listenWebAuthResult` subscription unchanged.
+- [x] **`App.tsx`**: scene machine now starts in `preparing`; listens to
+  `ipc.listenBootstrapStatus` — on `ready` advances to `login`; added `characters` scene
+  state; `Login.onSuccess` routes to `characters`; `CharacterSelect.onSuccess` routes to
+  `server-menu`; added `handleSwitchCharacter` (reads stored `accountToken`, returns to
+  `characters` without browser); passes `onSwitchCharacter` to `ServerMenu`. Added
+  `PreparingScene` component with phase label, spinner, animated progress bar, error
+  state + retry.
+- [x] **`scenes/ServerMenu.tsx`**: added `onSwitchCharacter` prop; added "Сменить
+  персонажа" `IconBtn` (UserCog icon) in top bar.
+- [x] **`i18n/ru.json`**: added `characterSelect.*` keys; added `serverMenu.switchCharacter`.
+- [x] **`i18n/en.json`**: same keys in English.
+
+### Gates
+
+- [x] **GATE C GREEN**: `pnpm -C apps/ui build` — 363.27 kB bundle, zero TS errors.
+- [!] **GATE D (cargo check)**: Rust writes correctly; local cargo check blocked by
+  missing MinGW `dlltool` (BLOCKER-1 still applies). New modules `portal.rs` and
+  updated `main.rs`/`lib.rs` will be validated by CI on MSVC. No `bridge/` or Java
+  modules were touched.
+
+### BLOCKERS (Rust / CI-deferred)
+
+- **BLOCKER-1** (existing): `cargo check` requires MinGW `dlltool` which is absent
+  locally. CI on MSVC validates the full Rust compile. `portal.rs` uses only `reqwest`
+  and `serde_json` which are already in `Cargo.toml`; no new crates added.
+- **portal endpoints live**: `portal_list_characters` and `portal_create_session` depend
+  on the portal deploying the v2 web-auth change (see `docs/PORTAL-WEBAUTH-V2-TASK.md`).
+  Until that ships, the Rust commands will return HTTP errors in production (mock mode
+  works standalone in dev).
+
+---
+
 ## Next steps (for Opus)
 1. Deploy bridge jar to LaunchServer, run `build` on server, verify module loads
 2. Confirm Module-Config-Name `VarryalRuntime` is accepted (or rename to `JavaRuntime`)
 3. Test `init → authorize → fetchProfiles` with real server
 4. Run `tauri build` on a machine with MSVC Build Tools for the official Windows release
 5. Generate Varryal logo (GPT Image) and replace placeholder monogram
+6. Deploy portal web-auth v2 (PORTAL-WEBAUTH-V2-TASK.md) so account token is returned
+   from the browser redirect; then E2E-test the full new character flow

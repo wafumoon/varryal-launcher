@@ -1,7 +1,7 @@
 import { useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
-import { Play, Settings, LogOut, Users, Wifi, WifiOff } from 'lucide-react'
+import { Play, Settings, LogOut, Users, Wifi, WifiOff, UserCog } from 'lucide-react'
 import { ipc } from '../ipc/client'
 import { useAuthStore } from '../store/auth'
 import { useProfilesStore } from '../store/profiles'
@@ -11,9 +11,11 @@ interface ServerMenuProps {
   onPlay: (profile: ClientProfile) => void
   onSettings: (profile: ClientProfile) => void
   onLogout: () => void
+  /** Go back to character selection without re-doing browser login. */
+  onSwitchCharacter: () => void
 }
 
-export function ServerMenu({ onPlay, onSettings, onLogout }: ServerMenuProps) {
+export function ServerMenu({ onPlay, onSettings, onLogout, onSwitchCharacter }: ServerMenuProps) {
   const { t } = useTranslation()
   const { user } = useAuthStore()
   const { profiles, selected, loading, error, pings, setProfiles, selectProfile, setLoading, setError, setPing } = useProfilesStore()
@@ -58,6 +60,7 @@ export function ServerMenu({ onPlay, onSettings, onLogout }: ServerMenuProps) {
           {t('serverMenu.title')}
         </span>
         <span style={{ color: 'var(--text-mid)', fontSize: 13 }}>{user?.username}</span>
+        <IconBtn onClick={onSwitchCharacter} title={t('serverMenu.switchCharacter')}><UserCog size={15} /></IconBtn>
         <IconBtn onClick={handleLogout} title={t('serverMenu.logout')}><LogOut size={15} /></IconBtn>
       </div>
 

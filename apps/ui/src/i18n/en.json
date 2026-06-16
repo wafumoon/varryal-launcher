@@ -13,11 +13,18 @@
     "error_missing_token": "No token received. Please try again.",
     "error_invalid_callback": "Invalid response from the portal."
   },
+  "characterSelect": {
+    "title": "Select character",
+    "subtitle": "Choose who to play as",
+    "authorizing": "Signing in as character…",
+    "empty": "No characters found. Create one on the website."
+  },
   "serverMenu": {
     "title": "Select server",
     "play": "Play",
     "settings": "Settings",
     "logout": "Sign out",
+    "switchCharacter": "Switch character",
     "online": "online",
     "offline": "offline",
     "players": "{{count}} / {{max}} players"

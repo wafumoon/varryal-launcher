@@ -20,22 +20,38 @@ mod auth;
 mod config;
 mod jre;
 mod paths;
+mod portal;
 mod runner;
 mod ipc_proxy;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 /// Java major version used to run the launcher jar itself.
 ///
 /// Set to 25 to match the live Varryal profile (`minJavaVersion:25`).
-/// If a future profile requires a higher version, bump this constant
-/// (and `ensure_version` will provision that version automatically).
-///
-/// The Java version used to run each GAME is resolved by the GravitLauncher
-/// core from the profile — the launcher JRE just needs to be compatible.
 const LAUNCHER_JAVA_MAJOR: u32 = 25;
+
+// ── Bootstrap status event ────────────────────────────────────────────────────
+
+/// Payload for the `bootstrap_status` Tauri event.
+/// The frontend listens to this to gate the login button behind readiness.
+#[derive(Clone, serde::Serialize)]
+struct BootstrapStatus {
+    phase: &'static str,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progress: Option<f32>,
+}
+
+fn emit_bootstrap(app: &tauri::AppHandle, phase: &'static str, message: impl Into<String>, progress: Option<f32>) {
+    let _ = app.emit("bootstrap_status", BootstrapStatus {
+        phase,
+        message: message.into(),
+        progress,
+    });
+}
 
 fn main() {
     // Release builds have no console (windows_subsystem = "windows"), so persist any
@@ -94,8 +110,9 @@ fn main() {
 
             // Spawn the bootstrap task: provision JRE + launch jar + connect WS
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = bootstrap(app_handle).await {
+                if let Err(e) = bootstrap(app_handle.clone()).await {
                     tracing::error!("Bootstrap failed: {e}");
+                    emit_bootstrap(&app_handle, "error", format!("{e}"), None);
                 }
             });
 
@@ -104,6 +121,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             ipc_proxy::ipc_request,
             auth::start_web_auth,
+            portal::portal_list_characters,
+            portal::portal_create_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -118,21 +137,9 @@ async fn bootstrap(app: tauri::AppHandle) -> anyhow::Result<()> {
     // Load / create shell config (F4: config lives in varryal_data_dir, no app handle needed)
     let mut cfg = ShellConfig::load()?;
 
-    // ── F1: Provision the launcher JRE (Java 25) ─────────────────────────────
-    //
-    // The live varryal_main profile requires minJavaVersion:25. Using Java 25
-    // for the launcher process guarantees the GravitLauncher core can start and
-    // pass compatibility checks for that profile.  `ensure_version` is already
-    // multi-version-capable; adding a second call for Java 21 would provision a
-    // second JRE alongside it for older profiles.
-    //
-    // TODO (post-login): After `fetchProfiles` returns, read each profile's
-    //   minJavaVersion and call `jre_mgr.ensure_version(profile_min_java)` for
-    //   any version not already cached.  This requires the IPC proxy to be up,
-    //   so it is done in a separate task after bootstrap.  The profile field
-    //   mapping in IpcDispatcher.java already serialises `minJavaVersion` in
-    //   the ClientProfile JSON — the frontend store should forward it here via
-    //   a dedicated Tauri command (e.g. `ensure_jre_for_profile`).
+    // ── Phase: jre — Provision the launcher JRE (Java 25) ────────────────────
+    emit_bootstrap(&app, "jre", "Скачивание Java…", Some(0.0));
+
     let mut jre_mgr = JreManager::new(&mut cfg);
     let launcher_jre = jre_mgr.ensure_version(LAUNCHER_JAVA_MAJOR).await?;
     info!("Launcher JRE (Java {LAUNCHER_JAVA_MAJOR}): {}", launcher_jre.display());
@@ -140,14 +147,18 @@ async fn bootstrap(app: tauri::AppHandle) -> anyhow::Result<()> {
     // Save config with updated JRE entry
     cfg.save()?;
 
-    // ── F2: Resolve / download Varryal.jar ───────────────────────────────────
+    // ── Phase: jar — Resolve / download Varryal.jar ──────────────────────────
+    emit_bootstrap(&app, "jar", "Скачивание клиента…", Some(0.3));
+
     let jar_path = resolve_jar(&app, &mut cfg).await?;
     info!("Launcher jar: {}", jar_path.display());
 
     // Persist updated jar_downloaded_at timestamp
     cfg.save()?;
 
-    // ── Spawn Java process ───────────────────────────────────────────────────
+    // ── Phase: starting — Spawn Java process ─────────────────────────────────
+    emit_bootstrap(&app, "starting", "Запуск…", Some(0.6));
+
     let java_exe = launcher_jre
         .join("bin")
         .join(if cfg!(windows) { "javaw.exe" } else { "java" });
@@ -156,12 +167,18 @@ async fn bootstrap(app: tauri::AppHandle) -> anyhow::Result<()> {
     crate::runner::drain_stdout(&mut child);
     let _child = child; // keep handle alive so the process is not killed on drop
 
-    // ── Wait for IPC handshake ───────────────────────────────────────────────
+    // ── Phase: connecting — Wait for IPC handshake ───────────────────────────
+    emit_bootstrap(&app, "connecting", "Подключение…", Some(0.8));
+
     let handshake = ipc_proxy::wait_for_handshake(&app, 30).await?;
     info!("IPC handshake: port={} pid={}", handshake.port, handshake.pid);
 
     // ── Connect WebSocket and start proxying ─────────────────────────────────
     let proxy = IpcProxy::connect(handshake, app.clone()).await?;
+
+    // ── Phase: ready — all good, frontend may show login ─────────────────────
+    emit_bootstrap(&app, "ready", "Готово", Some(1.0));
+
     proxy.run().await;
 
     Ok(())

@@ -6,5 +6,6 @@ pub mod auth;
 pub mod config;
 pub mod jre;
 pub mod paths;
+pub mod portal;
 pub mod runner;
 pub mod ipc_proxy;

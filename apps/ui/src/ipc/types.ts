@@ -157,7 +157,12 @@ export interface RunFinishedEventData { readyProfileId: string; code: number }
 /** Payload of the `web_auth_result` Tauri event emitted by auth.rs. */
 export interface WebAuthResult {
   ok: boolean
-  /** Opaque JWT token — present only when ok === true. */
+  /**
+   * Account access token (Bearer for /launcher/me/*) — present only when ok === true.
+   * This is the account token, NOT a per-character minecraft token.
+   * The frontend stores it and uses it to call portal_list_characters /
+   * portal_create_session.
+   */
   token?: string
   /**
    * Error code from the portal or internal validation.
@@ -165,4 +170,48 @@ export interface WebAuthResult {
    * Internal codes: state_mismatch | missing_token | invalid_callback
    */
   error?: string
+}
+
+// ── Bootstrap status (emitted by Rust during startup) ────────────────────────
+
+/**
+ * Payload of the `bootstrap_status` Tauri event.
+ * Phases: "jre" | "jar" | "starting" | "connecting" | "ready" | "error"
+ */
+export interface BootstrapStatus {
+  phase: 'jre' | 'jar' | 'starting' | 'connecting' | 'ready' | 'error'
+  message: string
+  /** 0–1 progress fraction; present on jre/jar/starting/connecting/ready phases. */
+  progress?: number
+}
+
+// ── Portal API — characters ───────────────────────────────────────────────────
+
+export interface CharacterRace {
+  name: string
+}
+
+/** A player character from GET /launcher/me/characters. */
+export interface Character {
+  id: string
+  generatedNickname: string
+  minecraftUuid: string
+  race: CharacterRace
+  /** Short race/class alias shown under the name (e.g. "warrior"). */
+  alias: string
+  /** URL to a skin preview image (may be empty string). */
+  skinPreviewUrl: string
+}
+
+/** Shape of the portal GET /launcher/me/characters response. */
+export interface ListCharactersResponse {
+  items: Character[]
+}
+
+/** Shape of the portal POST /launcher/me/characters/{id}/session response. */
+export interface CreateSessionResponse {
+  minecraftAccessToken: string
+  uuid: string
+  username: string
+  skinUrl?: string
 }

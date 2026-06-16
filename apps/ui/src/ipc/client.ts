@@ -17,6 +17,9 @@ import type {
   GetSelfUserResult,
   ClientProfileSettings,
   WebAuthResult,
+  BootstrapStatus,
+  ListCharactersResponse,
+  CreateSessionResponse,
 } from './types'
 
 // ── Environment detection ─────────────────────────────────────────────────────
@@ -120,23 +123,42 @@ export function listenTauriEvent<T>(
 // dispatchEvent directly).
 let eventForwardingStarted = false
 export function startEventForwarding(): void {
-  if (eventForwardingStarted || !isTauri) return
+  if (eventForwardingStarted) return
   eventForwardingStarted = true
-  void getTauri().event.listen('ipc_event', (e: { payload: unknown }) => {
-    const v = e.payload as { channel?: string; name?: string; data?: Record<string, unknown> }
-    if (v && v.channel && v.name) dispatchEvent(v.channel, v.name, v.data ?? {})
-  })
+
+  if (isTauri) {
+    void getTauri().event.listen('ipc_event', (e: { payload: unknown }) => {
+      const v = e.payload as { channel?: string; name?: string; data?: Record<string, unknown> }
+      if (v && v.channel && v.name) dispatchEvent(v.channel, v.name, v.data ?? {})
+    })
+  } else {
+    // Mock mode: fire the fake bootstrap sequence so the Preparing scene
+    // advances to ready and reveals the login button.
+    void mockRequest<void>('bootstrap_status_start', {})
+  }
 }
 
 // ── Typed API surface ─────────────────────────────────────────────────────────
 
 export const ipc = {
+  // ── Bootstrap status (emitted by Rust before login is reachable) ───────────
+
+  /**
+   * Subscribe to the `bootstrap_status` Tauri event.
+   * Phases: jre → jar → starting → connecting → ready (or error).
+   * The frontend must wait for `ready` before showing the login button.
+   * Returns an unsubscribe function.
+   */
+  listenBootstrapStatus: (handler: (status: BootstrapStatus) => void) =>
+    listenTauriEvent<BootstrapStatus>('bootstrap_status', handler),
+
   // ── Web-auth (browser OAuth-redirect) ──────────────────────────────────────
 
   /**
    * Open the Varryal portal in the system browser to begin web-auth.
    * After the user logs in, the portal redirects to varryal://auth/callback,
    * which the Rust deep-link handler processes and emits `web_auth_result`.
+   * The token in the result is the ACCOUNT token (Bearer for /launcher/me/*).
    * Subscribe with `ipc.listenWebAuthResult` before calling this.
    */
   startWebAuth: () => invokeNative<void>('start_web_auth'),
@@ -147,6 +169,25 @@ export const ipc = {
    */
   listenWebAuthResult: (handler: (result: WebAuthResult) => void) =>
     listenTauriEvent<WebAuthResult>('web_auth_result', handler),
+
+  // ── Portal API (native Tauri commands, not proxied through Java WS) ────────
+
+  /**
+   * Fetch the list of characters for the authenticated account.
+   * `accountToken` is the Bearer token received from `web_auth_result`.
+   * Returns the full portal response (use `.items` for the character array).
+   */
+  listCharacters: (accountToken: string) =>
+    invokeNative<ListCharactersResponse>('portal_list_characters', { accountToken }),
+
+  /**
+   * Mint a per-character Minecraft access token.
+   * Returns `{ minecraftAccessToken, uuid, username, skinUrl }`.
+   * After this, call `ipc.selectAuthMethod('std')` then
+   * `ipc.authorize('', minecraftAccessToken)` to hand off to the Java bridge.
+   */
+  createSession: (accountToken: string, characterId: string) =>
+    invokeNative<CreateSessionResponse>('portal_create_session', { accountToken, characterId }),
 
   // ── Bridge IPC (proxied through Java WS) ──────────────────────────────────
 
@@ -184,17 +225,70 @@ async function mockRequest<T>(method: string, params: Record<string, unknown>): 
   await delay(80 + Math.random() * 120)
 
   switch (method) {
+    // ── Bootstrap status mock: emit the full phase sequence quickly ──────────
+    case 'bootstrap_status_start': {
+      // Called internally on mock init to simulate bootstrap phases.
+      const phases: Array<{ phase: string; message: string; progress: number }> = [
+        { phase: 'jre',        message: 'Скачивание Java…',  progress: 0.0 },
+        { phase: 'jar',        message: 'Скачивание клиента…', progress: 0.3 },
+        { phase: 'starting',   message: 'Запуск…',           progress: 0.6 },
+        { phase: 'connecting', message: 'Подключение…',      progress: 0.8 },
+        { phase: 'ready',      message: 'Готово',            progress: 1.0 },
+      ]
+      phases.forEach(({ phase, message, progress }, i) => {
+        setTimeout(() => {
+          dispatchEvent('bootstrap', 'status', { phase, message, progress })
+        }, 200 + i * 250)
+      })
+      return undefined as unknown as T
+    }
+
     // ── Web-auth mock: simulate the browser round-trip with a 1.5s delay ─────
     case 'start_web_auth': {
       // In mock mode we never open a real browser.
       // Simulate the portal redirect by firing `web_auth_result` after a short delay.
+      // The token is an ACCOUNT token (not a minecraft token).
       setTimeout(() => {
         dispatchEvent('web_auth', 'result', {
           ok: true,
-          token: 'mock-web-auth-token-' + crypto.randomUUID(),
+          token: 'mock-account-token-' + crypto.randomUUID(),
         })
       }, 1500)
       return undefined as unknown as T
+    }
+
+    // ── Portal API mocks ──────────────────────────────────────────────────────
+    case 'portal_list_characters': {
+      return {
+        items: [
+          {
+            id: 'char-uuid-1',
+            generatedNickname: 'ShadowElf_7291',
+            minecraftUuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+            race: { name: 'Эльф' },
+            alias: 'elf',
+            skinPreviewUrl: '',
+          },
+          {
+            id: 'char-uuid-2',
+            generatedNickname: 'IronDwarf_4418',
+            minecraftUuid: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+            race: { name: 'Гном' },
+            alias: 'dwarf',
+            skinPreviewUrl: '',
+          },
+        ],
+      } as T
+    }
+
+    case 'portal_create_session': {
+      const { characterId } = params as { characterId: string }
+      return {
+        minecraftAccessToken: 'mock-mc-token-' + characterId + '-' + crypto.randomUUID(),
+        uuid: params.characterId as string,
+        username: characterId === 'char-uuid-1' ? 'ShadowElf_7291' : 'IronDwarf_4418',
+        skinUrl: '',
+      } as T
     }
 
     case 'init':

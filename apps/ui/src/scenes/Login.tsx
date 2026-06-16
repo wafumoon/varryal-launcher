@@ -7,10 +7,10 @@ import { useAuthStore } from '../store/auth'
 import type { WebAuthResult } from '../ipc/types'
 
 interface LoginProps {
-  onSuccess: () => void
+  onSuccess: (accountToken: string) => void
 }
 
-type LoginPhase = 'idle' | 'waiting' | 'authorizing' | 'error'
+type LoginPhase = 'idle' | 'waiting' | 'error'
 
 // Map portal / internal error codes to RU/EN i18n keys
 const ERROR_KEY_MAP: Record<string, string> = {
@@ -25,13 +25,17 @@ const ERROR_KEY_MAP: Record<string, string> = {
 
 export function Login({ onSuccess }: LoginProps) {
   const { t } = useTranslation()
-  const { setLoading, setUser, setError, logout } = useAuthStore()
+  const { setLoading, setAccountToken, setError, logout } = useAuthStore()
   const [phase, setPhase] = useState<LoginPhase>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   // ── Handle the web_auth_result event emitted by Rust ─────────────────────
+  //
+  // The token in the result is the ACCOUNT token (Bearer for /launcher/me/*).
+  // We do NOT call ipc.authorize() here — that happens after character selection
+  // in CharacterSelect.tsx, using the per-character minecraftAccessToken.
 
-  const handleAuthResult = useCallback(async (result: WebAuthResult) => {
+  const handleAuthResult = useCallback((result: WebAuthResult) => {
     if (!result.ok || !result.token) {
       const code = result.error ?? 'server_error'
       const i18nKey = ERROR_KEY_MAP[code] ?? 'login.error_server_error'
@@ -42,20 +46,10 @@ export function Login({ onSuccess }: LoginProps) {
       return
     }
 
-    // Token received — hand it to the bridge: selectAuthMethod('std') then authorize('', token)
-    setPhase('authorizing')
-    try {
-      await ipc.selectAuthMethod('std')
-      const res = await ipc.authorize('', result.token)
-      setUser(res.user)
-      onSuccess()
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      setPhase('error')
-      setErrorMsg(msg)
-      setError(msg)
-    }
-  }, [t, setUser, setError, onSuccess])
+    // Account token received — store it and advance to character selection.
+    setAccountToken(result.token)
+    onSuccess(result.token)
+  }, [t, setAccountToken, setError, onSuccess])
 
   // Subscribe to web_auth_result on mount, unsubscribe on unmount
   useEffect(() => {
@@ -88,7 +82,7 @@ export function Login({ onSuccess }: LoginProps) {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  const isWaiting = phase === 'waiting' || phase === 'authorizing'
+  const isWaiting = phase === 'waiting'
 
   return (
     <motion.div
@@ -157,9 +151,7 @@ export function Login({ onSuccess }: LoginProps) {
               textAlign: 'center',
               lineHeight: 1.5,
             }}>
-              {phase === 'authorizing'
-                ? t('login.authorizing')
-                : t('login.waiting')}
+              {t('login.waiting')}
             </p>
             <button
               onClick={handleCancel}
