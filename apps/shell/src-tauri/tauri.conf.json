@@ -38,5 +38,13 @@
       "icons/icon.ico"
     ],
     "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["varryal"]
+      }
+    },
+    "single-instance": {}
   }
 }

@@ -166,6 +166,67 @@ Goal: `cargo check` exits 0 with `#![deny(warnings)]` active.
 - [x] **`main.rs`**: Removed unused `tauri::Manager` import; added `#![deny(warnings)]`
 - [x] **GATE D GREEN**: `cargo check` exits 0, zero errors, zero warnings (both `--target x86_64-pc-windows-gnu` and default)
 
+---
+
+## Phase H — Web-auth (browser login)
+
+_2026-06-16_
+
+Implements the full browser-based OAuth-redirect ("Claude Code"-style) auth flow.
+The portal opens in the system browser; after login the deep-link `varryal://`
+callback delivers the token to the launcher without any user input in the UI.
+
+### Rust (`apps/shell/src-tauri`)
+
+- [x] **`src/auth.rs`** (new): `PendingAuthState` (Mutex<Option<String>>),
+  `start_web_auth` Tauri command (generates CSPRNG UUID state, percent-encodes
+  `redirect_uri`, opens portal URL via `tauri-plugin-opener`),
+  `handle_callback` (parses query string, validates state, emits `web_auth_result` event),
+  `PORTAL_WEB_LOGIN_URL` + `REDIRECT_URI` constants, unit tests.
+- [x] **`Cargo.toml`**: added `tauri-plugin-deep-link = "2"` and
+  `tauri-plugin-single-instance = "2"`.
+- [x] **`tauri.conf.json`**: added `plugins.deep-link.desktop.schemes = ["varryal"]`
+  and `plugins.single-instance = {}`.
+- [x] **`src/main.rs`**: added `mod auth`; registered both plugins in builder;
+  wired `DeepLinkExt::on_open_url` handler (hot deep-link) and
+  `single-instance` callback (cold-start argv forwarding); added
+  `auth::start_web_auth` to `invoke_handler`; added `use tauri::Manager`.
+- [x] **`src/lib.rs`**: added `pub mod auth`.
+- [x] **`capabilities/default.json`**: added `"deep-link:default"`.
+- [x] **`build.rs`**: patched to skip `tauri_build::build()` (which calls
+  `tauri-winres`/`windres`) on the gnu toolchain; emits minimum cargo directives
+  instead. MSVC path (CI) unchanged. Extends BLOCKER-5 resolution.
+
+### Frontend (`apps/ui`)
+
+- [x] **`src/ipc/types.ts`**: added `WebAuthResult` interface.
+- [x] **`src/ipc/client.ts`**: added `getTauri()` helper; `invokeNative<T>()` for
+  direct Tauri commands; `listenTauriEvent<T>()` with mock fallback;
+  `ipc.startWebAuth()` and `ipc.listenWebAuthResult()` on the exported object;
+  mock handler for `start_web_auth` (fires success after 1.5 s).
+- [x] **`src/scenes/Login.tsx`**: replaced email/password form with single
+  "Войти через Varryal" button → `startWebAuth` → waiting spinner + Cancel →
+  `web_auth_result` → `selectAuthMethod('std')` + `authorize('', token)` →
+  `onSuccess`. Error codes mapped to RU i18n strings. Mock path works standalone.
+- [x] **`src/i18n/ru.json`**: added `login.webAuthBtn/retryBtn/waiting/authorizing`
+  + all 7 error-code keys; added `common.cancel`.
+- [x] **`src/i18n/en.json`**: same keys in English.
+
+### Gates
+
+- [x] **GATE C GREEN**: `pnpm build` — 353.86 kB bundle, zero TS errors.
+- [x] **GATE D (cargo check) GREEN**: `cargo check --target x86_64-pc-windows-gnu`
+  exits 0, zero errors, zero warnings.
+
+### Deferred to CI (Rust compile only in CI)
+- `tauri build` with MSVC toolchain needed for the real binary + deep-link OS
+  registration (scheme written to Windows registry by installer).
+- Single-instance plugin wires up correctly in source but only verifiable at
+  runtime on a compiled binary.
+- See BLOCKERS.md BLOCKER-5 and new BLOCKER-6.
+
+---
+
 ## Next steps (for Opus)
 1. Deploy bridge jar to LaunchServer, run `build` on server, verify module loads
 2. Confirm Module-Config-Name `VarryalRuntime` is accepted (or rename to `JavaRuntime`)

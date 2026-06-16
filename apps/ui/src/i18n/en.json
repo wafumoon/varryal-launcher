@@ -1,11 +1,17 @@
 {
   "login": {
     "title": "Sign in to Varryal",
-    "login": "Username",
-    "password": "Password",
-    "loginBtn": "Sign in",
-    "loading": "Signing in...",
-    "error": "Login failed"
+    "webAuthBtn": "Sign in via Varryal",
+    "retryBtn": "Try again",
+    "waiting": "Open your browser and sign in…",
+    "authorizing": "Authorising, please wait…",
+    "error_access_denied": "Access denied. Please try again.",
+    "error_email_not_verified": "Email not verified. Check your inbox and try again.",
+    "error_password_login_unavailable": "Password login is unavailable for this account.",
+    "error_server_error": "Server error. Please try again later.",
+    "error_state_mismatch": "Security check failed (state mismatch). Please try again.",
+    "error_missing_token": "No token received. Please try again.",
+    "error_invalid_callback": "Invalid response from the portal."
   },
   "serverMenu": {
     "title": "Select server",
@@ -48,6 +54,7 @@
     "error": "Error",
     "back": "Back",
     "close": "Close",
+    "cancel": "Cancel",
     "retry": "Retry",
     "version": "Version {{v}}"
   }

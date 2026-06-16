@@ -2,6 +2,7 @@
 // targets share the same module tree.  Mobile targets use this lib entry;
 // desktop uses the [[bin]] entry.  Both compile the same code.
 
+pub mod auth;
 pub mod config;
 pub mod jre;
 pub mod paths;

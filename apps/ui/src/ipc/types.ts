@@ -151,3 +151,18 @@ export interface DownloadErrorEventData { readyProfileId: string; error: string 
 export interface RunEventData { readyProfileId: string }
 export interface RunOutputEventData { readyProfileId: string; base64: string }
 export interface RunFinishedEventData { readyProfileId: string; code: number }
+
+// ── Web-auth (browser OAuth-redirect) ────────────────────────────────────────
+
+/** Payload of the `web_auth_result` Tauri event emitted by auth.rs. */
+export interface WebAuthResult {
+  ok: boolean
+  /** Opaque JWT token — present only when ok === true. */
+  token?: string
+  /**
+   * Error code from the portal or internal validation.
+   * Portal codes: access_denied | email_not_verified | password_login_unavailable | server_error
+   * Internal codes: state_mismatch | missing_token | invalid_callback
+   */
+  error?: string
+}

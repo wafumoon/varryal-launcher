@@ -1,11 +1,17 @@
 {
   "login": {
     "title": "Войдите в Varryal",
-    "login": "Логин",
-    "password": "Пароль",
-    "loginBtn": "Войти",
-    "loading": "Вход...",
-    "error": "Ошибка входа"
+    "webAuthBtn": "Войти через Varryal",
+    "retryBtn": "Повторить",
+    "waiting": "Откройте браузер и авторизуйтесь…",
+    "authorizing": "Авторизация, подождите…",
+    "error_access_denied": "Вход отклонён. Попробуйте ещё раз.",
+    "error_email_not_verified": "Email не подтверждён. Проверьте почту и повторите.",
+    "error_password_login_unavailable": "Вход с паролем недоступен для этого аккаунта.",
+    "error_server_error": "Ошибка сервера. Попробуйте позже.",
+    "error_state_mismatch": "Ошибка безопасности (state). Попробуйте снова.",
+    "error_missing_token": "Токен не получен. Попробуйте снова.",
+    "error_invalid_callback": "Некорректный ответ от портала."
   },
   "serverMenu": {
     "title": "Выбор сервера",
@@ -48,6 +54,7 @@
     "error": "Ошибка",
     "back": "Назад",
     "close": "Закрыть",
+    "cancel": "Отмена",
     "retry": "Повторить",
     "version": "Версия {{v}}"
   }

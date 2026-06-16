@@ -16,6 +16,7 @@ import type {
   PingResult,
   GetSelfUserResult,
   ClientProfileSettings,
+  WebAuthResult,
 } from './types'
 
 // ── Environment detection ─────────────────────────────────────────────────────
@@ -48,16 +49,23 @@ function dispatchEvent(channel: string, name: string, data: Record<string, unkno
   handlers.forEach(h => h(data))
 }
 
+// ── Tauri internals accessor ──────────────────────────────────────────────────
+
+type TauriGlobal = {
+  core: { invoke: (cmd: string, args?: unknown) => Promise<unknown> }
+  event: { listen: (event: string, handler: (e: { payload: unknown }) => void) => Promise<() => void> }
+}
+
+function getTauri(): TauriGlobal {
+  return (window as unknown as Record<string, unknown>).__TAURI__ as TauriGlobal
+}
+
 // ── Core request function ─────────────────────────────────────────────────────
 
 export async function request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
   if (isTauri) {
     // Real Tauri invoke — Rust proxy handles token injection
-    const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as {
-      core: { invoke: (cmd: string, args?: unknown) => Promise<unknown> }
-      event: { listen: (event: string, handler: (e: { payload: unknown }) => void) => Promise<() => void> }
-    }
-    const response = await tauri.core.invoke('ipc_request', { method, params }) as IpcResponse<T>
+    const response = await getTauri().core.invoke('ipc_request', { method, params }) as IpcResponse<T>
     if (!response.ok) throw new Error(response.error?.message ?? 'IPC error')
     return response.result as T
   } else {
@@ -66,9 +74,66 @@ export async function request<T>(method: string, params: Record<string, unknown>
   }
 }
 
+// ── Direct Tauri command invocation (non-IPC, not proxied through Java) ───────
+
+/**
+ * Invoke a native Tauri command directly (not routed through the Java WS bridge).
+ * Used for commands implemented in Rust itself, e.g. `start_web_auth`.
+ */
+async function invokeNative<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
+  if (isTauri) {
+    return getTauri().core.invoke(cmd, args) as Promise<T>
+  }
+  // Mock: delegate to mockRequest using the command name as method key
+  return mockRequest<T>(cmd, args)
+}
+
+/**
+ * Listen to a Tauri event by name. Returns an unsubscribe function.
+ * In mock mode, wires into the local eventListeners registry using the
+ * convention channel = first segment before '_', name = rest joined by '_'.
+ * e.g. "web_auth_result" → channel "web", name "auth_result"
+ * The mock dispatcher for `start_web_auth` fires dispatchEvent('web_auth', 'result', …)
+ * so we map "web_auth_result" → channel "web_auth", name "result".
+ */
+export function listenTauriEvent<T>(
+  event: string,
+  handler: (payload: T) => void,
+): () => void {
+  if (isTauri) {
+    let unlisten: (() => void) | undefined
+    getTauri().event.listen(event, (e) => handler(e.payload as T)).then((fn) => { unlisten = fn })
+    return () => { unlisten?.() }
+  }
+  // Mock mode: split on the LAST '_' so "web_auth_result" → ("web_auth", "result")
+  const lastUnderscore = event.lastIndexOf('_')
+  const channel = lastUnderscore >= 0 ? event.slice(0, lastUnderscore) : event
+  const name = lastUnderscore >= 0 ? event.slice(lastUnderscore + 1) : ''
+  return onEvent(channel, name, (data) => handler(data as unknown as T))
+}
+
 // ── Typed API surface ─────────────────────────────────────────────────────────
 
 export const ipc = {
+  // ── Web-auth (browser OAuth-redirect) ──────────────────────────────────────
+
+  /**
+   * Open the Varryal portal in the system browser to begin web-auth.
+   * After the user logs in, the portal redirects to varryal://auth/callback,
+   * which the Rust deep-link handler processes and emits `web_auth_result`.
+   * Subscribe with `ipc.listenWebAuthResult` before calling this.
+   */
+  startWebAuth: () => invokeNative<void>('start_web_auth'),
+
+  /**
+   * Subscribe to the `web_auth_result` Tauri event.
+   * Returns an unsubscribe function; call it when the component unmounts.
+   */
+  listenWebAuthResult: (handler: (result: WebAuthResult) => void) =>
+    listenTauriEvent<WebAuthResult>('web_auth_result', handler),
+
+  // ── Bridge IPC (proxied through Java WS) ──────────────────────────────────
+
   init: () => request<InitResult>('init'),
   selectAuthMethod: (method: string) => request<Record<string, never>>('selectAuthMethod', { method }),
   tryAuthorize: () => request<TryAuthorizeResult>('tryAuthorize'),
@@ -103,6 +168,19 @@ async function mockRequest<T>(method: string, params: Record<string, unknown>): 
   await delay(80 + Math.random() * 120)
 
   switch (method) {
+    // ── Web-auth mock: simulate the browser round-trip with a 1.5s delay ─────
+    case 'start_web_auth': {
+      // In mock mode we never open a real browser.
+      // Simulate the portal redirect by firing `web_auth_result` after a short delay.
+      setTimeout(() => {
+        dispatchEvent('web_auth', 'result', {
+          ok: true,
+          token: 'mock-web-auth-token-' + crypto.randomUUID(),
+        })
+      }, 1500)
+      return undefined as unknown as T
+    }
+
     case 'init':
       return {
         authMethods: [{ name: 'std', displayName: 'Varryal Auth', visible: true }],

@@ -77,6 +77,33 @@ is unnecessary — to be confirmed during Phase 2 integration testing.
 
 ---
 
+## BLOCKER-6: Deep-link / single-instance plugins compile only in CI (cargo check is green locally)
+
+**Status:** KNOWN / CI-ONLY
+
+**Detail:** `tauri-plugin-deep-link` and `tauri-plugin-single-instance` were added
+in Phase H.  `cargo check` (Gate D) passes locally with the gnu toolchain.
+`tauri build` (which produces the real binary + registers the `varryal://` scheme
+in the Windows registry via the NSIS/WiX installer) requires the MSVC toolchain
+and runs only in CI (`windows-latest` runner).
+
+Runtime behaviour that can only be verified post-`tauri build`:
+- OS-level URL-scheme registration (`varryal://` → Varryal Launcher executable).
+- Single-instance forwarding: a second `varryal://` invocation routes args to
+  the running instance via the plugin's IPC channel.
+- Deep-link `on_open_url` callback fires on cold-start and hot invocation.
+
+The Rust source is type-correct (`cargo check` clean); the logic is verified by
+unit tests in `auth.rs` (`percent_encode`, `parse_query`).
+
+**Resolution path:** Run `tauri build` in CI, install the `.exe`/`.msi`, register
+the scheme, and test the full flow:
+  1. Launch the app.
+  2. Open `varryal://auth/callback?token=test&state=<pending-state>` in a browser.
+  3. Confirm the `web_auth_result` event fires and the UI advances to ServerMenu.
+
+---
+
 ## BLOCKER-5: MSVC Build Tools not installable locally (no elevation)
 
 **Status:** KNOWN / LOCAL-ONLY LIMITATION

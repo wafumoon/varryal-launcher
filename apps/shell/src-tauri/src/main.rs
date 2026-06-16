@@ -16,12 +16,14 @@
 // Treat all warnings as errors so CI catches regressions.
 #![deny(warnings)]
 
+mod auth;
 mod config;
 mod jre;
 mod paths;
 mod runner;
 mod ipc_proxy;
 
+use tauri::Manager;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -50,8 +52,40 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        // Single-instance: when a second instance is launched (e.g. via a varryal:// deep-link
+        // on Windows), its arguments are forwarded to the already-running instance here.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // Look for a varryal:// URL in the forwarded arguments and handle it.
+            let pending = app.state::<auth::PendingAuthState>();
+            for arg in &argv {
+                if arg.starts_with("varryal://auth/callback") {
+                    auth::handle_callback(app, arg, &pending);
+                    return;
+                }
+            }
+        }))
+        // Deep-link: handles varryal:// URLs when the app is already running (macOS/Linux)
+        // as well as cold-start deep-links (app launched directly by the OS via the scheme).
+        .plugin(tauri_plugin_deep_link::init())
+        .manage(auth::PendingAuthState::new())
         .setup(|app| {
+            use tauri_plugin_deep_link::DeepLinkExt;
+
             let app_handle = app.handle().clone();
+
+            // Register deep-link handler for cold-start and hot (already-running) invocations.
+            app.deep_link().on_open_url({
+                let app_handle2 = app_handle.clone();
+                move |event| {
+                    let pending = app_handle2.state::<auth::PendingAuthState>();
+                    for url in event.urls() {
+                        let url_str = url.as_str();
+                        if url_str.starts_with("varryal://auth/callback") {
+                            auth::handle_callback(&app_handle2, url_str, &pending);
+                        }
+                    }
+                }
+            });
 
             // Spawn the bootstrap task: provision JRE + launch jar + connect WS
             tauri::async_runtime::spawn(async move {
@@ -64,6 +98,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             ipc_proxy::ipc_request,
+            auth::start_web_auth,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
