@@ -85,6 +85,45 @@ pub async fn portal_create_session(
         .map_err(|e| format!("Failed to parse response: {e}"))
 }
 
+/// Log in with email + password (credentials login).
+///
+/// Called by the frontend as `invoke('portal_login', { email, password })`.
+/// On success returns the parsed JSON body, which includes `accountAccessToken`
+/// (the account Bearer token for /launcher/me/*), `accountId`, `displayName`
+/// and `accountAccessExpiresAt`.
+///
+/// On failure the portal's human-readable `message` (e.g. "Неверная почта или
+/// пароль.") is surfaced verbatim so the UI can show it directly. Credentials
+/// are never logged.
+#[command]
+pub async fn portal_login(email: String, password: String) -> Result<Value, String> {
+    let url = format!("{PORTAL_API_BASE}/launcher/auth/login");
+    info!("portal_login: POST {url}");
+
+    let client = build_client()?;
+    let response = client
+        .post(&url)
+        .json(&serde_json::json!({ "email": email, "password": password }))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+
+    if !status.is_success() {
+        warn!("portal_login failed: HTTP {status}");
+        // Prefer the portal's localized `message` field; fall back to the status.
+        let msg = serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(str::to_string))
+            .unwrap_or_else(|| format!("HTTP {status}"));
+        return Err(msg);
+    }
+
+    serde_json::from_str::<Value>(&body).map_err(|e| format!("Failed to parse response: {e}"))
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn build_client() -> Result<reqwest::Client, String> {

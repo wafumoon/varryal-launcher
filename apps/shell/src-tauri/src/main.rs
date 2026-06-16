@@ -123,6 +123,7 @@ fn main() {
             auth::start_web_auth,
             portal::portal_list_characters,
             portal::portal_create_session,
+            portal::portal_login,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

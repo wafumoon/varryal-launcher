@@ -1,89 +1,56 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback, type FormEvent, type CSSProperties } from 'react'
 import { motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
-import { Globe, AlertCircle, Loader2, XCircle } from 'lucide-react'
+import { LogIn, AlertCircle, Loader2 } from 'lucide-react'
 import { ipc } from '../ipc/client'
 import { useAuthStore } from '../store/auth'
-import type { WebAuthResult } from '../ipc/types'
 
 interface LoginProps {
+  /** Called with the account access token once credentials login succeeds. */
   onSuccess: (accountToken: string) => void
 }
 
-type LoginPhase = 'idle' | 'waiting' | 'error'
-
-// Map portal / internal error codes to RU/EN i18n keys
-const ERROR_KEY_MAP: Record<string, string> = {
-  access_denied: 'login.error_access_denied',
-  email_not_verified: 'login.error_email_not_verified',
-  password_login_unavailable: 'login.error_password_login_unavailable',
-  server_error: 'login.error_server_error',
-  state_mismatch: 'login.error_state_mismatch',
-  missing_token: 'login.error_missing_token',
-  invalid_callback: 'login.error_invalid_callback',
-}
+type LoginPhase = 'idle' | 'submitting' | 'error'
 
 export function Login({ onSuccess }: LoginProps) {
   const { t } = useTranslation()
-  const { setLoading, setAccountToken, setError, logout } = useAuthStore()
+  const { setAccountToken, setError } = useAuthStore()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [phase, setPhase] = useState<LoginPhase>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  // ── Handle the web_auth_result event emitted by Rust ─────────────────────
-  //
-  // The token in the result is the ACCOUNT token (Bearer for /launcher/me/*).
-  // We do NOT call ipc.authorize() here — that happens after character selection
-  // in CharacterSelect.tsx, using the per-character minecraftAccessToken.
+  const submitting = phase === 'submitting'
 
-  const handleAuthResult = useCallback((result: WebAuthResult) => {
-    if (!result.ok || !result.token) {
-      const code = result.error ?? 'server_error'
-      const i18nKey = ERROR_KEY_MAP[code] ?? 'login.error_server_error'
-      const msg = t(i18nKey)
+  // ── Submit credentials → portal /launcher/auth/login → account token ───────
+  const handleSubmit = useCallback(async (e: FormEvent) => {
+    e.preventDefault()
+    if (submitting) return
+
+    const mail = email.trim()
+    if (!mail || !password) {
       setPhase('error')
-      setErrorMsg(msg)
-      setError(msg)
+      setErrorMsg(t('login.emptyFields'))
       return
     }
 
-    // Account token received — store it and advance to character selection.
-    setAccountToken(result.token)
-    onSuccess(result.token)
-  }, [t, setAccountToken, setError, onSuccess])
-
-  // Subscribe to web_auth_result on mount, unsubscribe on unmount
-  useEffect(() => {
-    const unsub = ipc.listenWebAuthResult(handleAuthResult)
-    return unsub
-  }, [handleAuthResult])
-
-  // ── Button handler ────────────────────────────────────────────────────────
-
-  const handleLogin = useCallback(async () => {
-    setPhase('waiting')
+    setPhase('submitting')
     setErrorMsg(null)
-    setLoading()
     try {
-      await ipc.startWebAuth()
-      // Now waiting for the deep-link callback; phase stays 'waiting'
+      const res = await ipc.portalLogin(mail, password)
+      // Account token received — store it and advance to character selection.
+      setAccountToken(res.accountAccessToken)
+      onSuccess(res.accountAccessToken)
     } catch (err) {
+      // The rejected message is the portal's localized text (e.g. wrong password).
       const msg = err instanceof Error ? err.message : String(err)
       setPhase('error')
       setErrorMsg(msg)
       setError(msg)
     }
-  }, [setLoading, setError])
+  }, [email, password, submitting, t, setAccountToken, setError, onSuccess])
 
-  const handleCancel = useCallback(() => {
-    setPhase('idle')
-    setErrorMsg(null)
-    logout()
-  }, [logout])
-
-  // ── Render ────────────────────────────────────────────────────────────────
-
-  const isWaiting = phase === 'waiting'
-
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -98,15 +65,18 @@ export function Login({ onSuccess }: LoginProps) {
         background: 'var(--bg-base)',
       }}
     >
-      <div style={{
-        width: 360,
-        background: 'var(--bg-elev-1)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-modal)',
-        padding: 32,
-      }}>
+      <form
+        onSubmit={handleSubmit}
+        style={{
+          width: 360,
+          background: 'var(--bg-elev-1)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-modal)',
+          padding: 32,
+        }}
+      >
         {/* Logo / title */}
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <div style={{
             width: 56, height: 56,
             borderRadius: 16,
@@ -119,63 +89,17 @@ export function Login({ onSuccess }: LoginProps) {
             color: '#fff',
             marginBottom: 14,
           }}>V</div>
-          <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-hi)' }}>
+          <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-hi)', margin: 0 }}>
             {t('login.title')}
           </h1>
+          <p style={{ fontSize: 13, color: 'var(--text-mid)', marginTop: 6 }}>
+            {t('login.subtitle')}
+          </p>
         </div>
 
-        {/* Waiting state */}
-        {isWaiting && (
-          <motion.div
-            key="waiting"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 14,
-              padding: '8px 0 4px',
-            }}
-          >
-            <Loader2
-              size={32}
-              style={{
-                color: 'var(--primary)',
-                animation: 'spin 1s linear infinite',
-              }}
-            />
-            <p style={{
-              fontSize: 14,
-              color: 'var(--text-mid)',
-              textAlign: 'center',
-              lineHeight: 1.5,
-            }}>
-              {t('login.waiting')}
-            </p>
-            <button
-              onClick={handleCancel}
-              style={{
-                marginTop: 4,
-                height: 36,
-                padding: '0 20px',
-                borderRadius: 'var(--radius-control)',
-                background: 'var(--bg-elev-3)',
-                border: '1px solid var(--border)',
-                color: 'var(--text-mid)',
-                fontSize: 13,
-                cursor: 'pointer',
-              }}
-            >
-              {t('common.cancel')}
-            </button>
-          </motion.div>
-        )}
-
-        {/* Error state */}
+        {/* Error block */}
         {phase === 'error' && errorMsg && (
           <motion.div
-            key="error"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             style={{
@@ -187,7 +111,7 @@ export function Login({ onSuccess }: LoginProps) {
               background: 'rgba(229,87,92,0.1)',
               padding: '10px 12px',
               borderRadius: 'var(--radius-control)',
-              marginBottom: 14,
+              marginBottom: 16,
             }}
           >
             <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -195,61 +119,99 @@ export function Login({ onSuccess }: LoginProps) {
           </motion.div>
         )}
 
-        {/* Idle / error: show the login button */}
-        {!isWaiting && (
-          <button
-            onClick={handleLogin}
-            style={{
-              width: '100%',
-              height: 44,
-              borderRadius: 'var(--radius-control)',
-              background: 'var(--primary)',
-              color: '#fff',
-              fontWeight: 600,
-              fontSize: 15,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 9,
-              cursor: 'pointer',
-              transition: 'background 0.15s, opacity 0.15s',
-            }}
-          >
-            <Globe size={17} />
-            {phase === 'error'
-              ? t('login.retryBtn')
-              : t('login.webAuthBtn')}
-          </button>
-        )}
+        {/* Email field */}
+        <label style={labelStyle}>{t('login.email')}</label>
+        <input
+          className="vy-input"
+          type="email"
+          autoComplete="email"
+          autoFocus
+          spellCheck={false}
+          placeholder={t('login.emailPlaceholder')}
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          disabled={submitting}
+          style={inputStyle}
+        />
 
-        {/* Dismiss error without retrying */}
-        {phase === 'error' && (
-          <button
-            onClick={handleCancel}
-            style={{
-              width: '100%',
-              marginTop: 10,
-              height: 36,
-              borderRadius: 'var(--radius-control)',
-              background: 'transparent',
-              border: '1px solid var(--border)',
-              color: 'var(--text-lo)',
-              fontSize: 13,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              cursor: 'pointer',
-            }}
-          >
-            <XCircle size={13} />
-            {t('common.cancel')}
-          </button>
-        )}
-      </div>
+        {/* Password field */}
+        <label style={{ ...labelStyle, marginTop: 14 }}>{t('login.password')}</label>
+        <input
+          className="vy-input"
+          type="password"
+          autoComplete="current-password"
+          placeholder={t('login.passwordPlaceholder')}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          disabled={submitting}
+          style={inputStyle}
+        />
 
-      {/* CSS keyframes for spinner */}
-      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+        {/* Submit */}
+        <button
+          type="submit"
+          disabled={submitting}
+          style={{
+            width: '100%',
+            height: 44,
+            marginTop: 22,
+            borderRadius: 'var(--radius-control)',
+            background: 'var(--primary)',
+            color: '#fff',
+            fontWeight: 600,
+            fontSize: 15,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 9,
+            cursor: submitting ? 'default' : 'pointer',
+            opacity: submitting ? 0.7 : 1,
+            transition: 'background 0.15s, opacity 0.15s',
+          }}
+        >
+          {submitting ? (
+            <>
+              <Loader2 size={17} style={{ animation: 'spin 1s linear infinite' }} />
+              {t('login.signingIn')}
+            </>
+          ) : (
+            <>
+              <LogIn size={17} />
+              {t('login.submitBtn')}
+            </>
+          )}
+        </button>
+      </form>
+
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .vy-input:focus { border-color: var(--primary); outline: none; }
+        .vy-input::placeholder { color: var(--text-lo); }
+      `}</style>
     </motion.div>
   )
+}
+
+// ── Shared inline styles ─────────────────────────────────────────────────────
+
+const labelStyle: CSSProperties = {
+  display: 'block',
+  fontSize: 12,
+  fontWeight: 500,
+  color: 'var(--text-mid)',
+  marginBottom: 6,
+}
+
+const inputStyle: CSSProperties = {
+  width: '100%',
+  height: 42,
+  padding: '0 14px',
+  borderRadius: 'var(--radius-control)',
+  background: 'var(--bg-elev-2)',
+  border: '1px solid var(--border)',
+  color: 'var(--text-hi)',
+  fontSize: 14,
+  outline: 'none',
+  boxSizing: 'border-box',
+  transition: 'border-color 0.15s',
 }

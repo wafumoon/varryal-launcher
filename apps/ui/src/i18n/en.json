@@ -1,6 +1,14 @@
 {
   "login": {
     "title": "Sign in to Varryal",
+    "subtitle": "With your Varryal website account",
+    "email": "Email",
+    "password": "Password",
+    "emailPlaceholder": "you@example.com",
+    "passwordPlaceholder": "Your password",
+    "submitBtn": "Sign in",
+    "signingIn": "Signing in…",
+    "emptyFields": "Enter email and password",
     "webAuthBtn": "Sign in via Varryal",
     "retryBtn": "Try again",
     "waiting": "Open your browser and sign in…",

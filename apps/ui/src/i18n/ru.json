@@ -1,6 +1,14 @@
 {
   "login": {
     "title": "Войдите в Varryal",
+    "subtitle": "Аккаунтом сайта Varryal",
+    "email": "Почта",
+    "password": "Пароль",
+    "emailPlaceholder": "you@example.com",
+    "passwordPlaceholder": "Ваш пароль",
+    "submitBtn": "Войти",
+    "signingIn": "Вход…",
+    "emptyFields": "Введите почту и пароль",
     "webAuthBtn": "Войти через Varryal",
     "retryBtn": "Повторить",
     "waiting": "Откройте браузер и авторизуйтесь…",

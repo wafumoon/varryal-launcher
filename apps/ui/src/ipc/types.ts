@@ -215,3 +215,15 @@ export interface CreateSessionResponse {
   username: string
   skinUrl?: string
 }
+
+// ── Portal API — credentials login ───────────────────────────────────────────
+
+/** Shape of the portal POST /launcher/auth/login response (email+password). */
+export interface LoginResult {
+  accountId: string
+  displayName: string
+  /** Account access token — Bearer for /launcher/me/*. NOT a per-character token. */
+  accountAccessToken: string
+  /** ISO-8601 expiry of the account token. */
+  accountAccessExpiresAt: string
+}

@@ -20,6 +20,7 @@ import type {
   BootstrapStatus,
   ListCharactersResponse,
   CreateSessionResponse,
+  LoginResult,
 } from './types'
 
 // ── Environment detection ─────────────────────────────────────────────────────
@@ -173,6 +174,16 @@ export const ipc = {
   // ── Portal API (native Tauri commands, not proxied through Java WS) ────────
 
   /**
+   * Log in with email + password (credentials login).
+   * Returns the account access token (Bearer for /launcher/me/*) plus account
+   * metadata. The frontend stores `accountAccessToken` and uses it for
+   * `listCharacters` / `createSession`. No browser, no deep-link.
+   * On failure the rejected Error message is the portal's localized text.
+   */
+  portalLogin: (email: string, password: string) =>
+    invokeNative<LoginResult>('portal_login', { email, password }),
+
+  /**
    * Fetch the list of characters for the authenticated account.
    * `accountToken` is the Bearer token received from `web_auth_result`.
    * Returns the full portal response (use `.items` for the character array).
@@ -258,6 +269,16 @@ async function mockRequest<T>(method: string, params: Record<string, unknown>): 
     }
 
     // ── Portal API mocks ──────────────────────────────────────────────────────
+    case 'portal_login': {
+      const { email } = params as { email: string }
+      return {
+        accountId: 'mock-account-id',
+        displayName: email.split('@')[0] || 'MockUser',
+        accountAccessToken: 'mock-account-token-' + crypto.randomUUID(),
+        accountAccessExpiresAt: '2099-01-01T00:00:00.000Z',
+      } as T
+    }
+
     case 'portal_list_characters': {
       return {
         items: [
