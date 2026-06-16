@@ -42,3 +42,6 @@ minisign.key
 
 # ── Runtime data dirs (local dev) ────────────────────────────
 data/
+
+# local smoke-test artifacts (tokens, jars, node_modules)
+_smoketest/
