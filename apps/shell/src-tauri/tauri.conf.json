@@ -44,7 +44,6 @@
       "desktop": {
         "schemes": ["varryal"]
       }
-    },
-    "single-instance": {}
+    }
   }
 }
