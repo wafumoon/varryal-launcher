@@ -55,6 +55,13 @@ public class WsDownloadCallback extends LauncherBackendAPI.DownloadCallback {
 
     @Override
     public void onCanCancel(Runnable cancel) {
+        // Gravit calls onCanCancel(null) to clear the cancel handler once a phase
+        // finishes. ConcurrentHashMap.put(key, null) throws a (message-less) NPE, so
+        // remove the entry instead of storing null.
+        if (cancel == null) {
+            cancelRunnables.remove(readyProfileId);
+            return;
+        }
         cancelRunnables.put(readyProfileId, cancel);
         JsonObject data = new JsonObject();
         data.addProperty("readyProfileId", readyProfileId);

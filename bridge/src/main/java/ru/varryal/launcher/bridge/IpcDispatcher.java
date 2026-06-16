@@ -261,7 +261,7 @@ public class IpcDispatcher {
             if (err != null) {
                 JsonObject data = new JsonObject();
                 data.addProperty("readyProfileId", readyProfileId);
-                data.addProperty("error", err.getMessage());
+                data.addProperty("error", errorDetail(err));
                 server.broadcastEvent("download", "onError", data);
                 return;
             }
@@ -283,7 +283,7 @@ public class IpcDispatcher {
         } catch (Exception e) {
             JsonObject data = new JsonObject();
             data.addProperty("readyProfileId", readyProfileId);
-            data.addProperty("error", e.getMessage());
+            data.addProperty("error", errorDetail(e));
             server.broadcastEvent("run", "onError", data);
         }
     }
@@ -512,5 +512,24 @@ public class IpcDispatcher {
 
     private static String msgId(JsonObject msg) {
         return msg.has("id") ? msg.get("id").getAsString() : null;
+    }
+
+    /**
+     * Produce a full diagnostic string (root-cause type, message and stack trace)
+     * for an exception surfaced to the frontend. CompletableFuture wraps failures in
+     * CompletionException/ExecutionException, so unwrap to the real cause first —
+     * otherwise the UI only ever sees a bare "java.lang.NullPointerException".
+     */
+    private static String errorDetail(Throwable t) {
+        if (t == null) return "unknown error";
+        Throwable root = t;
+        while ((root instanceof java.util.concurrent.CompletionException
+                || root instanceof java.util.concurrent.ExecutionException)
+                && root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        java.io.StringWriter sw = new java.io.StringWriter();
+        root.printStackTrace(new java.io.PrintWriter(sw));
+        return sw.toString();
     }
 }

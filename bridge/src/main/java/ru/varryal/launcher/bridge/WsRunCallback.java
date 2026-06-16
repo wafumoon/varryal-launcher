@@ -33,6 +33,13 @@ public class WsRunCallback extends LauncherBackendAPI.RunCallback {
 
     @Override
     public void onCanTerminate(Runnable terminate) {
+        // Gravit passes null to clear the terminate handler when the process ends.
+        // ConcurrentHashMap.put(key, null) throws a (message-less) NPE, so remove
+        // the entry instead of storing null.
+        if (terminate == null) {
+            terminateRunnables.remove(readyProfileId);
+            return;
+        }
         terminateRunnables.put(readyProfileId, terminate);
         JsonObject data = new JsonObject();
         data.addProperty("readyProfileId", readyProfileId);
