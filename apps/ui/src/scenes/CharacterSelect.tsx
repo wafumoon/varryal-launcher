@@ -10,11 +10,13 @@ interface CharacterSelectProps {
   accountToken: string
   /** Called when a character session has been minted and the bridge authorized. */
   onSuccess: () => void
+  /** Clear the (possibly expired) session and return to the login form. */
+  onRelogin: () => void
 }
 
 type Phase = 'loading' | 'list' | 'authorizing' | 'error'
 
-export function CharacterSelect({ accountToken, onSuccess }: CharacterSelectProps) {
+export function CharacterSelect({ accountToken, onSuccess, onRelogin }: CharacterSelectProps) {
   const { t } = useTranslation()
   const { setUser, setError: storeSetError } = useAuthStore()
   const [phase, setPhase] = useState<Phase>('loading')
@@ -78,7 +80,7 @@ export function CharacterSelect({ accountToken, onSuccess }: CharacterSelectProp
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'var(--bg-base)',
+        background: 'transparent',
       }}
     >
       <div style={{
@@ -150,11 +152,27 @@ export function CharacterSelect({ accountToken, onSuccess }: CharacterSelectProp
               width: '100%', height: 40,
               borderRadius: 'var(--radius-control)',
               background: 'var(--primary)', color: 'var(--on-primary)',
+              clipPath: 'var(--cut-corners)',
               fontWeight: 600, fontSize: 14,
               cursor: 'pointer',
             }}
           >
             {t('common.retry')}
+          </button>
+        )}
+        {phase === 'error' && (
+          <button
+            onClick={onRelogin}
+            style={{
+              width: '100%', height: 36, marginTop: 10,
+              borderRadius: 'var(--radius-control)',
+              background: 'transparent',
+              border: '1px solid var(--border)',
+              color: 'var(--text-lo)',
+              fontSize: 13, cursor: 'pointer',
+            }}
+          >
+            {t('characterSelect.relogin')}
           </button>
         )}
 

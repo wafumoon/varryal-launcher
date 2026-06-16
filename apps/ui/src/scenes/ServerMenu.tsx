@@ -113,7 +113,7 @@ export function ServerMenu({ onPlay, onSettings, onLogout, onSwitchCharacter }: 
               borderRadius: 'var(--radius-control)',
               background: 'var(--primary)',
               color: 'var(--on-primary)',
-              boxShadow: 'var(--glow-primary)',
+              clipPath: 'var(--cut-corners)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               fontSize: 14, fontWeight: 600,
             }}

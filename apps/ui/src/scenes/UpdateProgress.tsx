@@ -62,7 +62,7 @@ export function UpdateProgress({ profile, settings, onComplete, onBack }: Update
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-base)' }}
+      style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent' }}
     >
       <div style={{
         width: 420,

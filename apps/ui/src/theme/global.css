@@ -30,6 +30,8 @@
   /* Signature site treatments */
   --glow-primary: 0 0 0 1px #f0c98238, 0 10px 30px -10px #f0c98259;
   --hairline: 0 0 0 1px var(--border);
+  /* Beveled "forged" corners — the varryal.ru signature panel/button shape. */
+  --cut-corners: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
 }
 
 *, *::before, *::after {
@@ -45,11 +47,12 @@ html, body, #root {
 }
 
 body {
-  /* Layered ink with a faint brass top-glow and cool depth at the bottom,
-     echoing the varryal.ru dark-fantasy backdrop. */
+  /* The varryal.ru hero art as an atmospheric backdrop, dimmed under a dark
+     ink gradient (so panels/text stay readable) plus a faint brass top-glow. */
   background:
-    radial-gradient(1100px 620px at 50% -12%, #14110c 0%, transparent 58%),
-    radial-gradient(900px 600px at 92% 112%, #0a0f16 0%, transparent 55%),
+    linear-gradient(to bottom, rgba(7,9,14,0.66), rgba(7,9,14,0.84) 50%, rgba(7,9,14,0.97)),
+    radial-gradient(1100px 560px at 50% -8%, rgba(240,201,130,0.07), transparent 60%),
+    url('/varryal-hero.png') center 16% / cover no-repeat,
     var(--bg-base);
   background-attachment: fixed;
   color: var(--text-hi);

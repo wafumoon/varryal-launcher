@@ -53,6 +53,56 @@ fn handshake_path(_app: &tauri::AppHandle) -> Result<PathBuf> {
     Ok(crate::paths::varryal_data_dir()?.join("ipc-handshake.json"))
 }
 
+/// Before spawning our own bridge, kill any leftover bridge from a previous run
+/// (the launcher does not yet reap its Java child on exit) and delete the stale
+/// handshake file. Otherwise `wait_for_handshake` and the per-request reads in
+/// `ipc_request` could point at an orphaned JVM: `init()` would populate auth
+/// methods on one bridge while `selectAuthMethod`/`authorize` hit another that
+/// was never initialised — which surfaces as
+/// "This method call not allowed before select authMethod".
+pub fn clear_stale_bridge(app: &tauri::AppHandle) {
+    let path = match handshake_path(app) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    if let Ok(raw) = std::fs::read_to_string(&path) {
+        if let Ok(h) = serde_json::from_str::<IpcHandshake>(&raw) {
+            info!("Killing previous bridge pid={}", h.pid);
+            kill_bridge_pid(h.pid);
+        }
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[cfg(windows)]
+fn kill_bridge_pid(pid: u64) {
+    use std::os::windows::process::CommandExt;
+    // IMAGENAME filter guards against PID reuse — only kill if it is still javaw.
+    let _ = std::process::Command::new("taskkill")
+        .args([
+            "/F",
+            "/FI",
+            &format!("PID eq {pid}"),
+            "/FI",
+            "IMAGENAME eq javaw.exe",
+        ])
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .output();
+}
+
+#[cfg(not(windows))]
+fn kill_bridge_pid(pid: u64) {
+    // Verify the pid is a java process before killing (guards against PID reuse).
+    let is_java = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("java"))
+        .unwrap_or(false);
+    if is_java {
+        let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).output();
+    }
+}
+
 // ── Proxy ─────────────────────────────────────────────────────────────────────
 
 pub struct IpcProxy {

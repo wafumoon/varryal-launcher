@@ -168,7 +168,7 @@ export function App() {
       display: 'flex',
       flexDirection: 'column',
       height: '100vh',
-      background: 'var(--bg-base)',
+      background: 'transparent',
       overflow: 'hidden',
     }}>
       <Titlebar />
@@ -194,6 +194,7 @@ export function App() {
             key="characters"
             accountToken={scene.accountToken}
             onSuccess={goToServerMenu}
+            onRelogin={handleLogout}
           />
         )}
 
@@ -276,18 +277,25 @@ function PreparingScene({
         padding: 40,
       }}
     >
-      {/* Logo monogram */}
-      <div style={{
-        width: 56, height: 56, borderRadius: 16,
-        background: isError ? 'rgba(229,87,92,0.15)' : 'var(--primary)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 28, fontWeight: 700, color: 'var(--on-primary)',
-        fontFamily: 'var(--font-display)',
-        boxShadow: isError ? 'none' : 'var(--glow-primary)',
-        marginBottom: 4,
-      }}>
-        {isError ? <AlertCircle size={28} color="var(--error)" /> : 'V'}
-      </div>
+      {/* Brand emblem (real site logo) — or an error glyph */}
+      {isError ? (
+        <div style={{
+          width: 56, height: 56, borderRadius: 16,
+          background: 'rgba(255,154,128,0.12)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          marginBottom: 4,
+        }}>
+          <AlertCircle size={28} color="var(--error)" />
+        </div>
+      ) : (
+        <img
+          src="/varryal-logo.png"
+          alt="Varryal"
+          width={64}
+          height={64}
+          style={{ marginBottom: 4, filter: 'drop-shadow(0 0 14px rgba(101,212,223,0.35))' }}
+        />
+      )}
 
       {/* Spinner or error icon */}
       {!isError && (

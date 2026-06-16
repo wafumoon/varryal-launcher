@@ -62,7 +62,7 @@ export function Login({ onSuccess }: LoginProps) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'var(--bg-base)',
+        background: 'transparent',
       }}
     >
       <form
@@ -77,20 +77,13 @@ export function Login({ onSuccess }: LoginProps) {
       >
         {/* Logo / title */}
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div style={{
-            width: 56, height: 56,
-            borderRadius: 16,
-            background: 'var(--primary)',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 28,
-            fontWeight: 700,
-            fontFamily: 'var(--font-display)',
-            color: 'var(--on-primary)',
-            boxShadow: 'var(--glow-primary)',
-            marginBottom: 14,
-          }}>V</div>
+          <img
+            src="/varryal-logo.png"
+            alt="Varryal"
+            width={70}
+            height={70}
+            style={{ display: 'inline-block', marginBottom: 14, filter: 'drop-shadow(0 0 16px rgba(101,212,223,0.4))' }}
+          />
           <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-hi)', margin: 0 }}>
             {t('login.title')}
           </h1>
@@ -160,7 +153,7 @@ export function Login({ onSuccess }: LoginProps) {
             borderRadius: 'var(--radius-control)',
             background: 'var(--primary)',
             color: 'var(--on-primary)',
-            boxShadow: submitting ? 'none' : 'var(--glow-primary)',
+            clipPath: 'var(--cut-corners)',
             fontWeight: 600,
             fontSize: 15,
             display: 'flex',

@@ -25,7 +25,8 @@
     "title": "Select character",
     "subtitle": "Choose who to play as",
     "authorizing": "Signing in as character…",
-    "empty": "No characters found. Create one on the website."
+    "empty": "No characters found. Create one on the website.",
+    "relogin": "Sign in with another account"
   },
   "serverMenu": {
     "title": "Select server",

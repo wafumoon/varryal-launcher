@@ -163,6 +163,12 @@ async fn bootstrap(app: tauri::AppHandle) -> anyhow::Result<()> {
     let java_exe = launcher_jre
         .join("bin")
         .join(if cfg!(windows) { "javaw.exe" } else { "java" });
+
+    // Kill any leftover bridge from a previous run and clear its handshake, so every
+    // connection this session (handshake wait + per-request) targets the bridge we
+    // are about to spawn — not an orphaned, un-initialised JVM.
+    ipc_proxy::clear_stale_bridge(&app);
+
     let mut child = launch_jar(&java_exe, &jar_path)?;
     // Drain stdout in a background thread to prevent pipe-buffer deadlock.
     crate::runner::drain_stdout(&mut child);
