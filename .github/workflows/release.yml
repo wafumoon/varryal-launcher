@@ -1,0 +1,63 @@
+name: Release
+
+# Cut a release by pushing a version tag, e.g. `git tag v1.0.4 && git push origin v1.0.4`.
+# tauri-action builds the signed installer + updater artifacts (latest.json + .sig)
+# and publishes them as a GitHub Release. Installed launchers poll
+# /releases/latest/download/latest.json and auto-update.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: apps/ui/pnpm-lock.yaml
+
+      - name: Install Rust (MSVC)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable-x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/shell/src-tauri -> target
+
+      - name: Install UI deps
+        working-directory: apps/ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Install shell deps (tauri-cli)
+        working-directory: apps/shell
+        run: pnpm install --frozen-lockfile
+
+      - name: Build + publish signed release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing — must match the pubkey in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/shell
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Varryal Launcher ${{ github.ref_name }}'
+          releaseBody: 'Автообновление: установленные лаунчеры обновятся сами при следующем запуске.'
+          releaseDraft: false
+          prerelease: false

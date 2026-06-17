@@ -93,6 +93,38 @@ fn show_main_window(window: tauri::WebviewWindow) -> Result<(), String> {
     Ok(())
 }
 
+/// Check the GitHub Releases feed for a newer signed build.
+/// Returns the new version string if an update is available, otherwise null.
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await {
+        Ok(Some(update)) => Ok(Some(update.version)),
+        Ok(None) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Download + install the pending update (its minisign signature is verified by
+/// the plugin against the baked-in pubkey), then restart into the new version.
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let update = app
+        .updater()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "no update available".to_string())?;
+    update
+        .download_and_install(|_chunk, _total| {}, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+    app.restart()
+}
+
 /// Prepare the per-run launcher log file (`<data dir>/logs/launcher-latest.log`,
 /// truncated each launch) and return a writer factory for tracing. Returns None
 /// if the path can't be prepared, in which case logging stays stderr-only.
@@ -149,6 +181,7 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(auth::PendingAuthState::new())
         .setup(|app| {
             use tauri_plugin_deep_link::DeepLinkExt;
@@ -221,6 +254,8 @@ fn main() {
             open_external_url,
             hide_to_tray,
             show_main_window,
+            check_for_update,
+            install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

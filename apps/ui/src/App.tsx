@@ -24,6 +24,8 @@ type Scene =
 export function App() {
   const [scene, setScene] = useState<Scene>({ name: 'preparing' })
   const [bootstrapStatus, setBootstrapStatus] = useState<BootstrapStatus | null>(null)
+  const [update, setUpdate] = useState<{ version: string } | null>(null)
+  const [updating, setUpdating] = useState(false)
   const { setAuthMethods, setUser, setAccountToken, logout, accountToken } = useAuthStore()
   const { selectProfile, setActiveCharId } = useProfilesStore()
   const { profileSettings } = useSettingsStore()
@@ -31,6 +33,12 @@ export function App() {
   // Apply theme + start Java-bridge event forwarding on mount.
   // startEventForwarding() also kicks off the mock bootstrap sequence in dev.
   useEffect(() => { applyTheme(); startEventForwarding() }, [])
+
+  // One-shot auto-update check on launch (Tauri only; mock returns null). If a
+  // newer signed release exists, surface the banner below.
+  useEffect(() => {
+    ipc.checkForUpdate().then(v => { if (v) setUpdate({ version: v }) }).catch(() => {})
+  }, [])
 
   // Track bootstrap status for the Preparing UI ONLY. Scene advancement is driven
   // solely by the init() poll below — so init() (which loads the bridge's auth
@@ -133,6 +141,12 @@ export function App() {
     setScene({ name: 'preparing' })
   }, [])
 
+  // Download + install the pending update, then the app restarts itself.
+  const doUpdate = useCallback(() => {
+    setUpdating(true)
+    ipc.installUpdate().catch(() => setUpdating(false))
+  }, [])
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -147,6 +161,30 @@ export function App() {
       <ParticleField />
       <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
         <Titlebar />
+
+        {/* ── Auto-update banner ──────────────────────────────────────── */}
+        {update && (
+          <div style={{ position: 'absolute', top: 44, left: 0, right: 0, zIndex: 60, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+            <motion.div
+              initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+              style={{
+                pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 12,
+                background: 'var(--bg-elev-2)', border: '1px solid var(--border-strong)',
+                borderRadius: 'var(--radius-control)', padding: '8px 8px 8px 16px', boxShadow: 'var(--glow-primary)',
+              }}
+            >
+              <span style={{ fontSize: 13, color: 'var(--text-hi)' }}>
+                {updating ? 'Обновление…' : `Доступно обновление ${update.version}`}
+              </span>
+              {!updating && (
+                <>
+                  <button onClick={doUpdate} style={{ height: 30, padding: '0 14px', borderRadius: 'var(--radius-control)', background: 'var(--primary)', color: 'var(--on-primary)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Обновить</button>
+                  <button onClick={() => setUpdate(null)} style={{ height: 30, padding: '0 12px', borderRadius: 'var(--radius-control)', background: 'transparent', color: 'var(--text-mid)', fontSize: 13, cursor: 'pointer' }}>Позже</button>
+                </>
+              )}
+            </motion.div>
+          </div>
+        )}
 
         <AnimatePresence mode="wait">
         {/* ── Preparing — bootstrap in progress or error ───────────────── */}

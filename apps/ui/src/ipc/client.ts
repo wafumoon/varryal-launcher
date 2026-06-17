@@ -221,6 +221,15 @@ export const ipc = {
   /** Restore the launcher window from the tray (e.g. the game exited). Native command. */
   showMainWindow: () => invokeNative<void>('show_main_window'),
 
+  /**
+   * Check the GitHub Releases feed for a newer signed build. Returns the new
+   * version string if an update is available, else null. Native Tauri command.
+   */
+  checkForUpdate: () => invokeNative<string | null>('check_for_update'),
+
+  /** Download + install the pending update (signature-verified) and restart. */
+  installUpdate: () => invokeNative<void>('install_update'),
+
   // ── Bridge IPC (proxied through Java WS) ──────────────────────────────────
 
   init: () => request<InitResult>('init'),
@@ -302,7 +311,12 @@ async function mockRequest<T>(method: string, params: Record<string, unknown>): 
 
     case 'hide_to_tray':
     case 'show_main_window':
+    case 'install_update':
       return undefined as unknown as T
+
+    case 'check_for_update':
+      // Mock: no update available in dev.
+      return null as unknown as T
 
     case 'portal_login': {
       const { email } = params as { email: string }
