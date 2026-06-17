@@ -205,21 +205,21 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
       </div>
 
       {/* ── Play bar ── */}
-      <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', background: 'rgba(10,13,18,0.65)', backdropFilter: 'blur(10px)' }}>
+      <div style={{ padding: '10px 22px', borderTop: '1px solid var(--border)', background: 'rgba(10,13,18,0.65)', backdropFilter: 'blur(10px)' }}>
         <motion.button
           onClick={handlePlay} disabled={!ready}
           whileHover={ready ? { scale: 1.012 } : undefined} whileTap={ready ? { scale: 0.985 } : undefined}
           style={{
-            width: '100%', height: 44,
-            background: ready ? 'linear-gradient(180deg, var(--primary), var(--accent))' : 'var(--bg-elev-3)',
+            width: '100%', maxWidth: 300, margin: '0 auto', height: 42,
+            background: ready ? 'linear-gradient(135deg, var(--accent), var(--primary-press))' : 'var(--bg-elev-3)',
             color: 'var(--on-primary)',
-            clipPath: 'var(--cut-corners)', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, letterSpacing: 0.5,
+            clipPath: 'var(--cut-corners)', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, letterSpacing: 0.5,
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9,
             cursor: ready ? 'pointer' : 'default', opacity: ready ? 1 : 0.5,
-            boxShadow: ready ? '0 6px 20px -9px rgba(209,137,72,0.6)' : 'none',
+            boxShadow: ready ? '0 6px 18px -10px rgba(209,137,72,0.55)' : 'none',
           }}
         >
-          <Play size={18} />
+          <Play size={16} />
           {ready ? t('home.play') : t('nav.pickFirst')}
         </motion.button>
       </div>

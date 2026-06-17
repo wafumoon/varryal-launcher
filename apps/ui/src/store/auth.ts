@@ -59,6 +59,11 @@ export const useAuthStore = create<AuthStore>()(
       // The long-lived account token + the site display name survive a relaunch;
       // everything else is session-runtime state and starts fresh.
       partialize: (s) => ({ accountToken: s.accountToken, displayName: s.displayName }),
+      // v1: the site display name (navbar) is only captured at login. Sessions
+      // persisted before this feature have no displayName, so drop them once to
+      // force a single fresh login that records it (D27). Cheap one-time re-auth.
+      version: 1,
+      migrate: () => ({ accountToken: null, displayName: null }),
     },
   ),
 )
