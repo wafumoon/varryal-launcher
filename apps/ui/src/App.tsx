@@ -25,7 +25,7 @@ export function App() {
   const [scene, setScene] = useState<Scene>({ name: 'preparing' })
   const [bootstrapStatus, setBootstrapStatus] = useState<BootstrapStatus | null>(null)
   const { setAuthMethods, setUser, setAccountToken, logout, accountToken } = useAuthStore()
-  const { selectProfile } = useProfilesStore()
+  const { selectProfile, setActiveCharId } = useProfilesStore()
   const { profileSettings } = useSettingsStore()
 
   // Apply theme + start Java-bridge event forwarding on mount.
@@ -91,8 +91,9 @@ export function App() {
 
   const handleLogout = useCallback(() => {
     logout()
+    setActiveCharId(null)
     setScene({ name: 'login' })
-  }, [logout])
+  }, [logout, setActiveCharId])
 
   const handlePlay = useCallback(async (profile: ClientProfile) => {
     selectProfile(profile)

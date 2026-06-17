@@ -33,9 +33,14 @@ export function Running({ readyProfileId, onExit }: RunningProps) {
 
     const unsubs = [
       onEvent('run', 'onStarted', () => {
-        // Console disabled → hide the launcher to the system tray while the game
-        // runs (restored on exit / via the tray icon).
-        if (!useSettingsStore.getState().debugConsole) ipc.hideToTray().catch(() => {})
+        // Console disabled → hide the launcher to the tray AND return to the
+        // launcher view (selection is preserved in the store), so the user never
+        // sits on the console. The game runs in the background; clicking the tray
+        // icon brings the launcher back, already on the character screen.
+        if (!useSettingsStore.getState().debugConsole) {
+          ipc.hideToTray().catch(() => {})
+          onExit()
+        }
       }),
       onEvent('run', 'onCanTerminate', () => setCanTerminate(true)),
       onEvent('run', 'onNormalOutput', (d) => {
@@ -46,12 +51,12 @@ export function Running({ readyProfileId, onExit }: RunningProps) {
         const text = base64ToUtf8((d as { base64: string }).base64)
         text.split('\n').forEach(l => l && appendLine('[ERR] ' + l))
       }),
-      onEvent('run', 'onFinished', (d) => {
-        ipc.showMainWindow().catch(() => {})
-        setExited((d as { code: number }).code)
-        setTimeout(onExit, 3000)
-      }),
-      onEvent('run', 'onReadyToExit', () => { ipc.showMainWindow().catch(() => {}); onExit() }),
+      // The Gravit client detaches once the game JVM takes over, so onFinished /
+      // onReadyToExit can fire while the game is still running. Do NOT auto-navigate
+      // away (that bounced the user to a fresh, unselected character screen) — just
+      // record the exit code. In debug-console mode the user returns via the
+      // "to launcher" button; in normal mode they're already on the launcher.
+      onEvent('run', 'onFinished', (d) => setExited((d as { code: number }).code)),
     ]
 
     ipc.runProfile(readyProfileId).catch(e => appendLine('[BRIDGE] ' + String(e)))
@@ -109,6 +114,16 @@ export function Running({ readyProfileId, onExit }: RunningProps) {
             {t('running.terminate')}
           </button>
         )}
+        <button
+          onClick={onExit}
+          style={{
+            height: 30, padding: '0 12px', borderRadius: 'var(--radius-control)',
+            background: 'var(--bg-elev-3)', color: 'var(--text-mid)',
+            border: '1px solid var(--border)', fontSize: 12, fontWeight: 500,
+          }}
+        >
+          {t('running.back')}
+        </button>
       </div>
 
       {/* Console output */}

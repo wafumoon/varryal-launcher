@@ -23,7 +23,7 @@ interface LauncherProps {
 export function Launcher({ onPlay, onLogout }: LauncherProps) {
   const { t } = useTranslation()
   const { user, accountToken, displayName, setUser, setError: storeSetError } = useAuthStore()
-  const { selected, pings, setProfiles, selectProfile, setPing } = useProfilesStore()
+  const { selected, pings, activeCharId, setProfiles, selectProfile, setActiveCharId, setPing } = useProfilesStore()
   const { profileSettings, availableJava, debugConsole, setProfileSettings, updateRamMb, toggleFlag, toggleOptional, setSelectedJava, setAvailableJava, setDebugConsole } = useSettingsStore()
 
   const [tab, setTab] = useState<Tab>('character')
@@ -31,7 +31,6 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
   const [index, setIndex] = useState(0)
   const [dir, setDir] = useState(1)
   const [skin, setSkin] = useState('')
-  const [activeCharId, setActiveCharId] = useState<string | null>(null)
   const [authorizing, setAuthorizing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loadingChars, setLoadingChars] = useState(true)
@@ -41,7 +40,15 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
     let cancelled = false
     setLoadingChars(true); setError(null)
     ipc.listCharacters(accountToken ?? '')
-      .then(res => { if (!cancelled) { setCharacters(res.items ?? []); setIndex(0) } })
+      .then(res => { if (!cancelled) {
+        const items = res.items ?? []
+        setCharacters(items)
+        // Focus the previously-authorized character (e.g. returning from a run)
+        // so it shows as selected instead of resetting to the first one.
+        const active = useProfilesStore.getState().activeCharId
+        const idx = active ? items.findIndex(c => c.id === active) : -1
+        setIndex(idx >= 0 ? idx : 0)
+      } })
       .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)) })
       .finally(() => { if (!cancelled) setLoadingChars(false) })
     return () => { cancelled = true }
