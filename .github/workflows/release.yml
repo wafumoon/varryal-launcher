@@ -1,63 +1,95 @@
 name: Release
 
-# Cut a release by pushing a version tag, e.g. `git tag v1.0.4 && git push origin v1.0.4`.
-# tauri-action builds the signed installer + updater artifacts (latest.json + .sig)
-# and publishes them as a GitHub Release. Installed launchers poll
-# /releases/latest/download/latest.json and auto-update.
+# Cut a release by pushing a version tag (matching tauri.conf.json version):
+#   git tag v1.0.4 && git push origin v1.0.4
+# The build job produces the signed NSIS installer + .sig; the deploy job builds
+# latest.json and scp's both to the VDS, where nginx serves them privately at
+# https://launcher.varryal.ru/updates/. Installed launchers poll that and auto-update.
 on:
   push:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
-
 jobs:
-  release:
-    name: Release (windows)
+  build:
+    name: Build signed installer (windows)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v4
         with:
           version: 9
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: pnpm
           cache-dependency-path: apps/ui/pnpm-lock.yaml
-
       - name: Install Rust (MSVC)
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable-x86_64-pc-windows-msvc
-
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/shell/src-tauri -> target
-
       - name: Install UI deps
         working-directory: apps/ui
         run: pnpm install --frozen-lockfile
-
       - name: Install shell deps (tauri-cli)
         working-directory: apps/shell
         run: pnpm install --frozen-lockfile
-
-      - name: Build + publish signed release
-        uses: tauri-apps/tauri-action@v0
+      - name: Build (signed updater artifacts)
+        working-directory: apps/shell
+        run: pnpm tauri build
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Updater signing — must match the pubkey in tauri.conf.json.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Upload installer + signature
+        uses: actions/upload-artifact@v4
         with:
-          projectPath: apps/shell
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Varryal Launcher ${{ github.ref_name }}'
-          releaseBody: 'Автообновление: установленные лаунчеры обновятся сами при следующем запуске.'
-          releaseDraft: false
-          prerelease: false
+          name: installer
+          path: apps/shell/src-tauri/target/release/bundle/nsis/*-setup.exe*
+          if-no-files-found: error
+
+  deploy:
+    name: Publish feed to VDS
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer
+          path: dist
+      - name: Build latest.json + deploy to VDS
+        env:
+          VDS_SSH_KEY: ${{ secrets.VDS_SSH_KEY }}
+          VDS_HOST: ${{ secrets.VDS_HOST }}
+          VDS_USER: ${{ secrets.VDS_USER }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          EXE=$(ls dist/*-setup.exe | head -1)
+          SIG=$(cat dist/*-setup.exe.sig)
+          echo "version=$VERSION  installer=$EXE"
+          cat > latest.json <<JSON
+          {
+            "version": "$VERSION",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "$SIG",
+                "url": "https://launcher.varryal.ru/updates/varryal-launcher-setup.exe"
+              }
+            }
+          }
+          JSON
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VDS_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VDS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          # Stable installer filename so latest.json always points to the newest build.
+          scp -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no "$EXE" \
+            "$VDS_USER@$VDS_HOST:/var/www/varryal-updates/varryal-launcher-setup.exe"
+          scp -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no latest.json \
+            "$VDS_USER@$VDS_HOST:/var/www/varryal-updates/latest.json"
+          echo "Published $VERSION to https://launcher.varryal.ru/updates/"
