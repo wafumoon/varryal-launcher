@@ -25,6 +25,8 @@ mod runner;
 mod ipc_proxy;
 
 use tauri::{Emitter, Manager};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -53,6 +55,54 @@ fn emit_bootstrap(app: &tauri::AppHandle, phase: &'static str, message: impl Int
     });
 }
 
+/// Open an external http(s) URL in the system browser.
+///
+/// Used by the frontend for the login "register" link and the "create a character"
+/// prompt (empty character list). Refuses anything that isn't http(s) so the
+/// command can't be coerced into opening arbitrary local schemes.
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(format!("refusing to open non-http(s) URL: {url}"));
+    }
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Show + focus the main window (used by the tray icon / menu to restore the
+/// launcher after it was hidden to tray while the game ran).
+fn show_main_window_handle(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// Hide the main window to the system tray (post-play behaviour when the in-game
+/// console is disabled).
+#[tauri::command]
+fn hide_to_tray(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.hide().map_err(|e| e.to_string())
+}
+
+/// Restore the main window from the tray (e.g. the game exited).
+#[tauri::command]
+fn show_main_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.show().map_err(|e| e.to_string())?;
+    let _ = window.set_focus();
+    Ok(())
+}
+
+/// Prepare the per-run launcher log file (`<data dir>/logs/launcher-latest.log`,
+/// truncated each launch) and return a writer factory for tracing. Returns None
+/// if the path can't be prepared, in which case logging stays stderr-only.
+fn setup_log_file() -> Option<impl Fn() -> std::fs::File + Send + Sync + 'static> {
+    let dir = paths::varryal_data_dir().ok()?.join("logs");
+    std::fs::create_dir_all(&dir).ok()?;
+    let file = std::fs::File::create(dir.join("launcher-latest.log")).ok()?;
+    Some(move || file.try_clone().expect("clone launcher log file handle"))
+}
+
 fn main() {
     // Release builds have no console (windows_subsystem = "windows"), so persist any
     // startup panic to a crash log for diagnosis.
@@ -62,13 +112,24 @@ fn main() {
         }
     }));
 
-    // Initialise logging
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env()
-                .add_directive("varryal=debug".parse().unwrap()),
-        )
-        .init();
+    // Initialise logging — mirror everything to a per-run file in the data dir
+    // (logs/launcher-latest.log) so issues are diagnosable without a console
+    // (release builds have no stderr). Falls back to stderr-only if the file
+    // can't be opened.
+    let filter = EnvFilter::from_default_env().add_directive("varryal=debug".parse().unwrap());
+    match setup_log_file() {
+        Some(make_file) => {
+            use tracing_subscriber::fmt::writer::MakeWriterExt;
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_writer(make_file.and(std::io::stderr))
+                .with_env_filter(filter)
+                .init();
+        }
+        None => {
+            tracing_subscriber::fmt().with_env_filter(filter).init();
+        }
+    }
 
     info!("Varryal Launcher starting up");
 
@@ -108,6 +169,38 @@ fn main() {
                 }
             });
 
+            // ── System tray ──────────────────────────────────────────────────
+            // Lets the launcher hide to tray while the game runs (post-play
+            // behaviour when the in-game console is disabled). Left-click or the
+            // "Open" menu item restores the window; "Quit" exits the launcher.
+            {
+                let show_i = MenuItem::with_id(app, "show", "Открыть Varryal", true, None::<&str>)?;
+                let quit_i = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+                let icon = app.default_window_icon().cloned().ok_or("no default window icon")?;
+                let _tray = TrayIconBuilder::with_id("main")
+                    .tooltip("Varryal Launcher")
+                    .icon(icon)
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "show" => show_main_window_handle(app),
+                        "quit" => app.exit(0),
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            show_main_window_handle(tray.app_handle());
+                        }
+                    })
+                    .build(app)?;
+            }
+
             // Spawn the bootstrap task: provision JRE + launch jar + connect WS
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = bootstrap(app_handle.clone()).await {
@@ -125,6 +218,9 @@ fn main() {
             portal::portal_create_session,
             portal::portal_login,
             portal::portal_fetch_skin,
+            open_external_url,
+            hide_to_tray,
+            show_main_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

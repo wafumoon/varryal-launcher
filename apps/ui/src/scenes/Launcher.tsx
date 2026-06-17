@@ -1,16 +1,17 @@
-import { useState, useEffect, useCallback, type ReactNode } from 'react'
+import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import {
   User, Settings, Puzzle, Play, LogOut, ChevronLeft, ChevronRight,
-  Loader2, AlertCircle, Check, Cpu, Coffee, Wifi, WifiOff,
+  Loader2, AlertCircle, Check, Cpu, Coffee, Wifi, WifiOff, ExternalLink,
 } from 'lucide-react'
 import { ipc } from '../ipc/client'
 import { useAuthStore } from '../store/auth'
 import { useProfilesStore } from '../store/profiles'
 import { useSettingsStore } from '../store/settings'
 import { SkinPreview } from '../components/SkinPreview'
-import type { Character, ClientProfile } from '../ipc/types'
+import type { Character, ClientProfile, OptionalMod } from '../ipc/types'
+import { CREATE_CHARACTER_URL } from '../config'
 
 type Tab = 'character' | 'settings' | 'mods'
 
@@ -21,9 +22,9 @@ interface LauncherProps {
 
 export function Launcher({ onPlay, onLogout }: LauncherProps) {
   const { t } = useTranslation()
-  const { user, accountToken, setUser, setError: storeSetError } = useAuthStore()
+  const { user, accountToken, displayName, setUser, setError: storeSetError } = useAuthStore()
   const { selected, pings, setProfiles, selectProfile, setPing } = useProfilesStore()
-  const { profileSettings, availableJava, setProfileSettings, updateRamMb, toggleFlag, toggleOptional, setSelectedJava, setAvailableJava } = useSettingsStore()
+  const { profileSettings, availableJava, debugConsole, setProfileSettings, updateRamMb, toggleFlag, toggleOptional, setSelectedJava, setAvailableJava, setDebugConsole } = useSettingsStore()
 
   const [tab, setTab] = useState<Tab>('character')
   const [characters, setCharacters] = useState<Character[]>([])
@@ -130,7 +131,7 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
         </nav>
 
         <div style={{ flex: 1 }} />
-        {user?.username && <span style={{ fontSize: 13, color: 'var(--text-mid)' }}>{user.username}</span>}
+        {(displayName || user?.username) && <span style={{ fontSize: 13, color: 'var(--text-mid)' }}>{displayName || user?.username}</span>}
         <HoverIcon onClick={onLogout} title={t('home.logout')}><LogOut size={16} /></HoverIcon>
       </div>
 
@@ -182,25 +183,21 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
                   )}
                   {flags && (
                     <Panel title={t('settings.flags')}>
-                      <Toggle label={t('settings.autoEnter')} value={flags.AUTO_ENTER} onChange={() => toggleFlag('AUTO_ENTER')} />
                       <Toggle label={t('settings.fullscreen')} value={flags.FULLSCREEN} onChange={() => toggleFlag('FULLSCREEN')} />
                     </Panel>
                   )}
+                  <Panel title={t('settings.launcher')}>
+                    <Toggle label={t('settings.debugConsole')} description={t('settings.debugConsoleHint')}
+                      value={debugConsole} onChange={() => setDebugConsole(!debugConsole)} />
+                  </Panel>
                 </div>
               ) : <Hint>{t('nav.pickFirst')}</Hint>
             )}
             {tab === 'mods' && (
               ready ? (
-                <div style={{ padding: 24 }}>
-                  {mods.length > 0 ? (
-                    <Panel icon={<Puzzle size={15} />} title={t('home.mods')}>
-                      {mods.map(mod => (
-                        <Toggle key={mod.name} label={mod.name} description={mod.description}
-                          value={enabledOptionals.includes(mod.name)} onChange={() => toggleOptional(mod.name)} />
-                      ))}
-                    </Panel>
-                  ) : <Hint>{t('nav.noMods')}</Hint>}
-                </div>
+                mods.length > 0
+                  ? <ModsTab t={t} mods={mods} enabled={enabledOptionals} onToggle={toggleOptional} />
+                  : <Hint>{t('nav.noMods')}</Hint>
               ) : <Hint>{t('nav.pickFirst')}</Hint>
             )}
           </motion.div>
@@ -213,14 +210,16 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
           onClick={handlePlay} disabled={!ready}
           whileHover={ready ? { scale: 1.012 } : undefined} whileTap={ready ? { scale: 0.985 } : undefined}
           style={{
-            width: '100%', height: 52, background: 'var(--primary)', color: 'var(--on-primary)',
-            clipPath: 'var(--cut-corners)', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 19, letterSpacing: 0.5,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-            cursor: ready ? 'pointer' : 'default', opacity: ready ? 1 : 0.45,
-            boxShadow: ready ? '0 8px 28px -8px rgba(240,201,130,0.5)' : 'none',
+            width: '100%', height: 44,
+            background: ready ? 'linear-gradient(180deg, var(--primary), var(--accent))' : 'var(--bg-elev-3)',
+            color: 'var(--on-primary)',
+            clipPath: 'var(--cut-corners)', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, letterSpacing: 0.5,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9,
+            cursor: ready ? 'pointer' : 'default', opacity: ready ? 1 : 0.5,
+            boxShadow: ready ? '0 6px 20px -9px rgba(209,137,72,0.6)' : 'none',
           }}
         >
-          <Play size={21} />
+          <Play size={18} />
           {ready ? t('home.play') : t('nav.pickFirst')}
         </motion.button>
       </div>
@@ -245,7 +244,19 @@ function CharacterTab({ t, loading, error, characters, index, current, skin, dir
         </div>
       )}
       {!loading && characters.length === 0 && !error && (
-        <p style={{ color: 'var(--text-mid)', fontSize: 14, textAlign: 'center', maxWidth: 320 }}>{t('characterSelect.empty')}</p>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+          <p style={{ color: 'var(--text-mid)', fontSize: 14, textAlign: 'center', maxWidth: 320 }}>{t('characterSelect.empty')}</p>
+          <button
+            onClick={() => ipc.openExternalUrl(CREATE_CHARACTER_URL).catch(() => {})}
+            style={{
+              height: 42, padding: '0 22px', borderRadius: 'var(--radius-control)',
+              background: 'var(--primary)', color: 'var(--on-primary)', clipPath: 'var(--cut-corners)',
+              fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+            }}
+          >
+            <ExternalLink size={16} />{t('characterSelect.createOnSite')}
+          </button>
+        </div>
       )}
       {characters.length > 0 && current && (
         <>
@@ -304,6 +315,54 @@ function CharacterTab({ t, loading, error, characters, index, current, skin, dir
           </motion.button>
         </>
       )}
+    </div>
+  )
+}
+
+// ── Optional-mods tab (category sub-tabs) ─────────────────────────────────────
+
+function ModsTab({ t, mods, enabled, onToggle }: {
+  t: (k: string) => string; mods: OptionalMod[]; enabled: string[]; onToggle: (name: string) => void
+}) {
+  const catOf = useCallback((m: OptionalMod) => m.category?.trim() || t('mods.uncategorized'), [t])
+  const categories = useMemo(() => {
+    const seen: string[] = []
+    for (const m of mods) { const c = catOf(m); if (!seen.includes(c)) seen.push(c) }
+    return seen
+  }, [mods, catOf])
+
+  const [active, setActive] = useState<string>(categories[0] ?? '')
+  useEffect(() => {
+    if (!categories.includes(active)) setActive(categories[0] ?? '')
+  }, [categories, active])
+
+  const showTabs = categories.length > 1
+  const visible = mods.filter(m => catOf(m) === active)
+
+  return (
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {showTabs && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {categories.map(cat => {
+            const sel = cat === active
+            return (
+              <button key={cat} onClick={() => setActive(cat)} style={{
+                padding: '6px 14px', borderRadius: 'var(--radius-control)',
+                background: sel ? 'var(--primary)' : 'var(--bg-elev-3)',
+                color: sel ? 'var(--on-primary)' : 'var(--text-mid)',
+                border: `1px solid ${sel ? 'var(--primary)' : 'var(--border)'}`,
+                fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              }}>{cat}</button>
+            )
+          })}
+        </div>
+      )}
+      <Panel icon={<Puzzle size={15} />} title={showTabs ? active : t('home.mods')}>
+        {visible.map(mod => (
+          <Toggle key={mod.name} label={mod.name} description={mod.description}
+            value={enabled.includes(mod.name)} onChange={() => onToggle(mod.name)} />
+        ))}
+      </Panel>
     </div>
   )
 }

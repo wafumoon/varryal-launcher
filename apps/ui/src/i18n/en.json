@@ -19,7 +19,9 @@
     "error_server_error": "Server error. Please try again later.",
     "error_state_mismatch": "Security check failed (state mismatch). Please try again.",
     "error_missing_token": "No token received. Please try again.",
-    "error_invalid_callback": "Invalid response from the portal."
+    "error_invalid_callback": "Invalid response from the portal.",
+    "noAccount": "No account?",
+    "register": "Register"
   },
   "characterSelect": {
     "title": "Select character",
@@ -27,7 +29,8 @@
     "authorizing": "Signing in as character…",
     "empty": "No characters found. Create one on the website.",
     "relogin": "Sign in with another account",
-    "enter": "Play as this character"
+    "enter": "Play as this character",
+    "createOnSite": "Create a character on the site"
   },
   "serverMenu": {
     "title": "Select server",
@@ -53,6 +56,9 @@
     "active": "Selected",
     "noMods": "No optional mods for this server"
   },
+  "mods": {
+    "uncategorized": "Other"
+  },
   "download": {
     "title": "Updating",
     "phase_JAVA": "Downloading Java...",
@@ -76,6 +82,9 @@
     "flags": "Flags",
     "autoEnter": "Auto-join server",
     "fullscreen": "Fullscreen",
+    "launcher": "Launcher",
+    "debugConsole": "Game console on launch",
+    "debugConsoleHint": "Show the console window instead of hiding to the tray",
     "waylandSupport": "Wayland support (Linux)",
     "save": "Save",
     "saved": "Saved!"

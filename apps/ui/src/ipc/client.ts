@@ -206,6 +206,21 @@ export const ipc = {
    */
   fetchSkin: (url: string) => invokeNative<string>('portal_fetch_skin', { url }),
 
+  /**
+   * Open an external http(s) URL in the system browser (registration link,
+   * "create a character" prompt). Native Tauri command — not proxied through Java.
+   */
+  openExternalUrl: (url: string) => invokeNative<void>('open_external_url', { url }),
+
+  /**
+   * Hide the launcher window to the system tray (post-play, when the in-game
+   * console is disabled). Native Tauri command.
+   */
+  hideToTray: () => invokeNative<void>('hide_to_tray'),
+
+  /** Restore the launcher window from the tray (e.g. the game exited). Native command. */
+  showMainWindow: () => invokeNative<void>('show_main_window'),
+
   // ── Bridge IPC (proxied through Java WS) ──────────────────────────────────
 
   init: () => request<InitResult>('init'),
@@ -277,6 +292,17 @@ async function mockRequest<T>(method: string, params: Record<string, unknown>): 
     // ── Portal API mocks ──────────────────────────────────────────────────────
     case 'portal_fetch_skin':
       return '/default-skin.png' as T
+
+    case 'open_external_url': {
+      if (typeof window !== 'undefined') {
+        window.open((params as { url: string }).url, '_blank', 'noopener')
+      }
+      return undefined as unknown as T
+    }
+
+    case 'hide_to_tray':
+    case 'show_main_window':
+      return undefined as unknown as T
 
     case 'portal_login': {
       const { email } = params as { email: string }

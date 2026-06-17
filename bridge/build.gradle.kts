@@ -21,8 +21,8 @@ repositories {
 }
 
 dependencies {
-    // GravitLauncher 5.7.10 runtime (provides LauncherBackendAPI, RuntimeProvider, etc.)
-    compileOnly("com.gravitlauncher.launcher:launcher-runtime:5.7.10")
+    // GravitLauncher 5.7.12 runtime (provides LauncherBackendAPI, RuntimeProvider, etc.)
+    compileOnly("com.gravitlauncher.launcher:launcher-runtime:5.7.12")
 
     // Embedded WebSocket server
     implementation("org.java-websocket:Java-WebSocket:1.5.6")

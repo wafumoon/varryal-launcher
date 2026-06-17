@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { LogIn, AlertCircle, Loader2 } from 'lucide-react'
 import { ipc } from '../ipc/client'
 import { useAuthStore } from '../store/auth'
+import { REGISTER_URL } from '../config'
 
 interface LoginProps {
   /** Called with the account access token once credentials login succeeds. */
@@ -14,7 +15,7 @@ type LoginPhase = 'idle' | 'submitting' | 'error'
 
 export function Login({ onSuccess }: LoginProps) {
   const { t } = useTranslation()
-  const { setAccountToken, setError } = useAuthStore()
+  const { setAccountToken, setDisplayName, setError } = useAuthStore()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [phase, setPhase] = useState<LoginPhase>('idle')
@@ -38,8 +39,10 @@ export function Login({ onSuccess }: LoginProps) {
     setErrorMsg(null)
     try {
       const res = await ipc.portalLogin(mail, password)
-      // Account token received — store it and advance to character selection.
+      // Account token received — store it (+ the site display name for the navbar)
+      // and advance to character selection.
       setAccountToken(res.accountAccessToken)
+      if (res.displayName) setDisplayName(res.displayName)
       onSuccess(res.accountAccessToken)
     } catch (err) {
       // The rejected message is the portal's localized text (e.g. wrong password).
@@ -177,6 +180,18 @@ export function Login({ onSuccess }: LoginProps) {
             </>
           )}
         </button>
+
+        {/* Registration link → opens the site in the system browser */}
+        <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--text-mid)', marginTop: 16 }}>
+          {t('login.noAccount')}{' '}
+          <a
+            href={REGISTER_URL}
+            onClick={(e) => { e.preventDefault(); ipc.openExternalUrl(REGISTER_URL).catch(() => {}) }}
+            style={{ color: 'var(--primary)', cursor: 'pointer', fontWeight: 600 }}
+          >
+            {t('login.register')}
+          </a>
+        </p>
       </form>
 
       <style>{`

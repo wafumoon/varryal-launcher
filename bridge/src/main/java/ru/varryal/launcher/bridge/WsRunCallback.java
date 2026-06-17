@@ -3,6 +3,9 @@ package ru.varryal.launcher.bridge;
 import com.google.gson.JsonObject;
 import pro.gravit.launcher.core.backend.LauncherBackendAPI;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Map;
@@ -17,11 +20,37 @@ public class WsRunCallback extends LauncherBackendAPI.RunCallback {
     private final WsBridgeServer server;
     private final String readyProfileId;
     private final Map<String, Runnable> terminateRunnables;
+    /** Game stdout+stderr are mirrored here so users (and us) can grab a crash/launch log. */
+    private final OutputStream gameLog;
 
     public WsRunCallback(WsBridgeServer server, String readyProfileId, Map<String, Runnable> terminateRunnables) {
         this.server = server;
         this.readyProfileId = readyProfileId;
         this.terminateRunnables = terminateRunnables;
+        this.gameLog = openGameLog();
+    }
+
+    /** Open %APPDATA%/Varryal/logs/game-latest.log (truncate per run); null on failure (non-fatal). */
+    private static OutputStream openGameLog() {
+        try {
+            String appdata = System.getenv("APPDATA");
+            File base = (appdata != null && !appdata.isBlank()) ? new File(appdata) : new File(System.getProperty("user.home"));
+            File dir = new File(base, "Varryal" + File.separator + "logs");
+            dir.mkdirs();
+            return new FileOutputStream(new File(dir, "game-latest.log"), false);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private synchronized void appendGameLog(byte[] buf, int off, int len) {
+        if (gameLog == null) return;
+        try { gameLog.write(buf, off, len); gameLog.flush(); } catch (Exception ignored) {}
+    }
+
+    private synchronized void closeGameLog() {
+        if (gameLog == null) return;
+        try { gameLog.close(); } catch (Exception ignored) {}
     }
 
     @Override
@@ -53,6 +82,7 @@ public class WsRunCallback extends LauncherBackendAPI.RunCallback {
         byte[] slice = (off == 0 && len == buf.length) ? buf : Arrays.copyOfRange(buf, off, off + len);
         data.addProperty("base64", Base64.getEncoder().encodeToString(slice));
         server.broadcastEvent("run", "onNormalOutput", data);
+        appendGameLog(buf, off, len);
     }
 
     @Override
@@ -62,6 +92,7 @@ public class WsRunCallback extends LauncherBackendAPI.RunCallback {
         byte[] slice = (off == 0 && len == buf.length) ? buf : Arrays.copyOfRange(buf, off, off + len);
         data.addProperty("base64", Base64.getEncoder().encodeToString(slice));
         server.broadcastEvent("run", "onErrorOutput", data);
+        appendGameLog(buf, off, len);
     }
 
     @Override
@@ -70,6 +101,7 @@ public class WsRunCallback extends LauncherBackendAPI.RunCallback {
         data.addProperty("readyProfileId", readyProfileId);
         data.addProperty("code", code);
         server.broadcastEvent("run", "onFinished", data);
+        closeGameLog();
     }
 
     @Override

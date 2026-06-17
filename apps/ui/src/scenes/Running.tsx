@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Square, Terminal } from 'lucide-react'
 import { ipc, onEvent } from '../ipc/client'
 import { useRunStore } from '../store/run'
+import { useSettingsStore } from '../store/settings'
 
 interface RunningProps {
   readyProfileId: string
@@ -31,7 +32,11 @@ export function Running({ readyProfileId, onExit }: RunningProps) {
     start(readyProfileId)
 
     const unsubs = [
-      onEvent('run', 'onStarted', () => {}),
+      onEvent('run', 'onStarted', () => {
+        // Console disabled → hide the launcher to the system tray while the game
+        // runs (restored on exit / via the tray icon).
+        if (!useSettingsStore.getState().debugConsole) ipc.hideToTray().catch(() => {})
+      }),
       onEvent('run', 'onCanTerminate', () => setCanTerminate(true)),
       onEvent('run', 'onNormalOutput', (d) => {
         const text = base64ToUtf8((d as { base64: string }).base64)
@@ -42,10 +47,11 @@ export function Running({ readyProfileId, onExit }: RunningProps) {
         text.split('\n').forEach(l => l && appendLine('[ERR] ' + l))
       }),
       onEvent('run', 'onFinished', (d) => {
+        ipc.showMainWindow().catch(() => {})
         setExited((d as { code: number }).code)
         setTimeout(onExit, 3000)
       }),
-      onEvent('run', 'onReadyToExit', onExit),
+      onEvent('run', 'onReadyToExit', () => { ipc.showMainWindow().catch(() => {}); onExit() }),
     ]
 
     ipc.runProfile(readyProfileId).catch(e => appendLine('[BRIDGE] ' + String(e)))
