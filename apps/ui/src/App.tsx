@@ -18,7 +18,7 @@ type Scene =
   | { name: 'preparing' }
   | { name: 'login' }
   | { name: 'launcher' }
-  | { name: 'downloading'; profile: ClientProfile; settings: ClientProfileSettings }
+  | { name: 'downloading'; profile: ClientProfile; settings: ClientProfileSettings; mode: 'play' | 'reinstall' }
   | { name: 'running'; readyProfileId: string }
 
 export function App() {
@@ -103,8 +103,11 @@ export function App() {
     setScene({ name: 'login' })
   }, [logout, setActiveCharId])
 
-  const handlePlay = useCallback(async (profile: ClientProfile) => {
+  const startDownload = useCallback(async (profile: ClientProfile, mode: 'play' | 'reinstall') => {
     selectProfile(profile)
+    if (mode === 'reinstall') {
+      try { await ipc.reinstallProfile(profile.uuid) } catch { /* surfaced by the download step if files still missing */ }
+    }
     let settings: ClientProfileSettings
     if (profileSettings?.profileUuid === profile.uuid) {
       settings = profileSettings
@@ -120,11 +123,16 @@ export function App() {
         }
       }
     }
-    setScene({ name: 'downloading', profile, settings })
+    setScene({ name: 'downloading', profile, settings, mode })
   }, [profileSettings, selectProfile])
 
+  const handlePlay = useCallback((profile: ClientProfile) => startDownload(profile, 'play'), [startDownload])
+  const handleReinstall = useCallback((profile: ClientProfile) => startDownload(profile, 'reinstall'), [startDownload])
+
   const handleDownloadComplete = useCallback((readyProfileId: string) => {
-    setScene({ name: 'running', readyProfileId })
+    setScene(prev => prev.name === 'downloading' && prev.mode === 'reinstall'
+      ? { name: 'launcher' }
+      : { name: 'running', readyProfileId })
   }, [])
 
   const handleGameExit = useCallback(() => {
@@ -207,6 +215,7 @@ export function App() {
           <Launcher
             key="launcher"
             onPlay={handlePlay}
+            onReinstall={handleReinstall}
             onLogout={handleLogout}
           />
         )}

@@ -100,6 +100,7 @@ public class IpcDispatcher {
                 case "getUserSettings"            -> handleGetUserSettings(conn, id, params);
                 case "getSelfUser"                -> handleGetSelfUser(conn, id);
                 case "isTestMode"                 -> handleIsTestMode(conn, id);
+                case "reinstallProfile"           -> handleReinstallProfile(conn, id, params);
                 case "shutdown"                   -> handleShutdown(conn, id);
                 default -> sendError(conn, id, "UNKNOWN_METHOD", "Unknown method: " + method);
             }
@@ -368,6 +369,31 @@ public class IpcDispatcher {
         JsonObject result = new JsonObject();
         result.addProperty("testMode", api.isTestMode());
         sendResult(conn, id, result);
+    }
+
+    private void handleReinstallProfile(WebSocket conn, String id, JsonObject params) {
+        String uuid = params.has("profileUuid") ? params.get("profileUuid").getAsString() : "";
+        var profile = findProfileByUuid(uuid);
+        if (profile == null) { sendError(conn, id, "PROFILE_NOT_FOUND", uuid); return; }
+        if (!(profile instanceof pro.gravit.launcher.base.profiles.ClientProfile base)) {
+            sendError(conn, id, "REINSTALL_FAILED", "Unexpected profile type"); return;
+        }
+        try {
+            java.nio.file.Path root = pro.gravit.launcher.runtime.client.DirBridge.dirUpdates.normalize();
+            String dir = base.getDir();
+            if (dir == null || dir.isBlank()) { sendError(conn, id, "REINSTALL_FAILED", "empty profile dir"); return; }
+            java.nio.file.Path clientDir = root.resolve(dir).normalize();
+            // Safety: never delete the updates root itself.
+            if (clientDir.equals(root) || !clientDir.startsWith(root)) {
+                sendError(conn, id, "REINSTALL_FAILED", "unsafe path"); return;
+            }
+            if (java.nio.file.Files.exists(clientDir)) {
+                pro.gravit.utils.helper.IOHelper.deleteDir(clientDir, false);
+            }
+            sendResult(conn, id, new JsonObject());
+        } catch (Exception e) {
+            sendError(conn, id, "REINSTALL_FAILED", e.getMessage());
+        }
     }
 
     private void handleShutdown(WebSocket conn, String id) {
