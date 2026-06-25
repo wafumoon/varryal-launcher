@@ -243,6 +243,8 @@ export const ipc = {
     request<MakeSettingsResult>('makeClientProfileSettings', { profileUuid }),
   saveClientProfileSettings: (settings: ClientProfileSettings) =>
     request<Record<string, never>>('saveClientProfileSettings', { settings }),
+  reinstallProfile: (profileUuid: string) =>
+    request<Record<string, never>>('reinstallProfile', { profileUuid }),
   downloadProfile: (profileUuid: string, settings: ClientProfileSettings) =>
     request<DownloadProfileResult>('downloadProfile', { profileUuid, settings }),
   runProfile: (readyProfileId: string) =>
@@ -411,6 +413,9 @@ async function mockRequest<T>(method: string, params: Record<string, unknown>): 
       } as T
 
     case 'saveClientProfileSettings':
+      return {} as T
+
+    case 'reinstallProfile':
       return {} as T
 
     case 'downloadProfile': {

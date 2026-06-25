@@ -23,6 +23,7 @@ interface AuthStore {
   authMethods: AuthMethod[]
   selectedMethod: string
   error: string | null
+  lastCharId: string | null
   // actions
   setAuthMethods: (methods: AuthMethod[]) => void
   setSelectedMethod: (name: string) => void
@@ -31,6 +32,7 @@ interface AuthStore {
   setAccountToken: (token: string) => void
   setDisplayName: (name: string) => void
   setError: (msg: string) => void
+  setLastCharId: (id: string | null) => void
   logout: () => void
 }
 
@@ -44,6 +46,7 @@ export const useAuthStore = create<AuthStore>()(
       authMethods: [],
       selectedMethod: 'std',
       error: null,
+      lastCharId: null,
       setAuthMethods: (methods) => set({ authMethods: methods }),
       setSelectedMethod: (name) => set({ selectedMethod: name }),
       setLoading: () => set({ state: 'loading', error: null }),
@@ -51,14 +54,15 @@ export const useAuthStore = create<AuthStore>()(
       setAccountToken: (token) => set({ accountToken: token }),
       setDisplayName: (name) => set({ displayName: name }),
       setError: (msg) => set({ state: 'error', error: msg }),
-      logout: () => set({ state: 'idle', user: null, accountToken: null, displayName: null, error: null }),
+      setLastCharId: (id) => set({ lastCharId: id }),
+      logout: () => set({ state: 'idle', user: null, accountToken: null, displayName: null, lastCharId: null, error: null }),
     }),
     {
       name: 'varryal-auth',
       storage: createJSONStorage(() => localStorage),
       // The long-lived account token + the site display name survive a relaunch;
       // everything else is session-runtime state and starts fresh.
-      partialize: (s) => ({ accountToken: s.accountToken, displayName: s.displayName }),
+      partialize: (s) => ({ accountToken: s.accountToken, displayName: s.displayName, lastCharId: s.lastCharId }),
       // v1: the site display name (navbar) is only captured at login. Sessions
       // persisted before this feature have no displayName, so drop them once to
       // force a single fresh login that records it (D27). Cheap one-time re-auth.

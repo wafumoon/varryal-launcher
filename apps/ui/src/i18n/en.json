@@ -88,7 +88,12 @@
     "debugConsoleHint": "Show the console window instead of hiding to the tray",
     "waylandSupport": "Wayland support (Linux)",
     "save": "Save",
-    "saved": "Saved!"
+    "saved": "Saved!",
+    "repair": "Repair client",
+    "repairBtn": "Repair",
+    "repairHint": "Completely reinstall the client files (delete and re-download)",
+    "repairConfirm": "Delete all client files and download again?",
+    "repairConfirmYes": "Reinstall"
   },
   "common": {
     "loading": "Loading...",

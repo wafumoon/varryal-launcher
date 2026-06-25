@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import {
   User, Settings, Puzzle, Play, LogOut, ChevronLeft, ChevronRight,
-  Loader2, AlertCircle, Check, Cpu, Coffee, Wifi, WifiOff, ExternalLink,
+  Loader2, AlertCircle, Check, Cpu, Coffee, Wifi, WifiOff, ExternalLink, RotateCcw,
 } from 'lucide-react'
 import { ipc } from '../ipc/client'
 import { useAuthStore } from '../store/auth'
@@ -17,12 +17,13 @@ type Tab = 'character' | 'settings' | 'mods'
 
 interface LauncherProps {
   onPlay: (profile: ClientProfile) => void
+  onReinstall: (profile: ClientProfile) => void
   onLogout: () => void
 }
 
-export function Launcher({ onPlay, onLogout }: LauncherProps) {
+export function Launcher({ onPlay, onReinstall, onLogout }: LauncherProps) {
   const { t } = useTranslation()
-  const { user, accountToken, displayName, setUser, setError: storeSetError } = useAuthStore()
+  const { user, accountToken, displayName, setUser, setError: storeSetError, setLastCharId } = useAuthStore()
   const { selected, pings, activeCharId, setProfiles, selectProfile, setActiveCharId, setPing } = useProfilesStore()
   const { profileSettings, availableJava, debugConsole, setProfileSettings, updateRamMb, toggleFlag, toggleOptional, setSelectedJava, setAvailableJava, setDebugConsole } = useSettingsStore()
 
@@ -34,6 +35,7 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
   const [authorizing, setAuthorizing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loadingChars, setLoadingChars] = useState(true)
+  const [confirmReinstall, setConfirmReinstall] = useState(false)
 
   // ── Load characters ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -72,9 +74,8 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
     setIndex(i => (i + delta + characters.length) % characters.length)
   }, [characters.length])
 
-  // ── Authorize as the focused character ───────────────────────────────────────
-  const authorizeChar = useCallback(async () => {
-    const char = characters[index]
+  // ── Authorize as a given character ───────────────────────────────────────────
+  const authorizeCharacter = useCallback(async (char: Character) => {
     if (!char || !accountToken) return
     setAuthorizing(true); setError(null)
     try {
@@ -86,6 +87,7 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
       const authRes = await ipc.authorize('', session.minecraftAccessToken)
       setUser(authRes.user)
       setActiveCharId(char.id)
+      setLastCharId(char.id)
       // Load server profile + settings now that we have an authorized session.
       const pr = await ipc.fetchProfiles()
       setProfiles(pr.profiles)
@@ -102,7 +104,29 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
     } finally {
       setAuthorizing(false)
     }
-  }, [characters, index, accountToken, setUser, storeSetError, setProfiles, selectProfile, setProfileSettings, setPing, setAvailableJava])
+  }, [accountToken, setUser, storeSetError, setProfiles, selectProfile, setProfileSettings, setPing, setAvailableJava, setLastCharId])
+
+  // Wrapper: authorize the currently focused character (used by the Войти button)
+  const authorizeFocused = useCallback(() => {
+    const c = characters[index]
+    if (c) authorizeCharacter(c)
+  }, [characters, index, authorizeCharacter])
+
+  // One-shot auto-authorize: on fresh launch, re-enter as the last selected character
+  const autoAuthTried = useRef(false)
+  useEffect(() => {
+    if (autoAuthTried.current) return
+    if (loadingChars || characters.length === 0) return
+    // Already authorized this session (e.g. returned from a game run) — leave as-is
+    if (useProfilesStore.getState().activeCharId) return
+    const lastId = useAuthStore.getState().lastCharId
+    if (!lastId) return
+    const lastChar = characters.find(c => c.id === lastId)
+    if (!lastChar) return
+    autoAuthTried.current = true
+    setIndex(characters.indexOf(lastChar))
+    authorizeCharacter(lastChar)
+  }, [loadingChars, characters, authorizeCharacter])
 
   const ready = !!activeCharId && !!selected && !!profileSettings
   const handlePlay = useCallback(() => {
@@ -155,7 +179,7 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
               <CharacterTab
                 t={t} loading={loadingChars} error={error} characters={characters} index={index}
                 current={current} skin={skin} dir={dir} activeCharId={activeCharId} authorizing={authorizing}
-                onFlip={flip} onAuthorize={authorizeChar}
+                onFlip={flip} onAuthorize={authorizeFocused}
               />
             )}
             {tab === 'settings' && (
@@ -196,6 +220,28 @@ export function Launcher({ onPlay, onLogout }: LauncherProps) {
                   <Panel title={t('settings.launcher')}>
                     <Toggle label={t('settings.debugConsole')} description={t('settings.debugConsoleHint')}
                       value={debugConsole} onChange={() => setDebugConsole(!debugConsole)} />
+                  </Panel>
+                  <Panel title={t('settings.repair')}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div style={{ fontSize: 12, color: 'var(--text-lo)' }}>{t('settings.repairHint')}</div>
+                      {!confirmReinstall ? (
+                        <button onClick={() => setConfirmReinstall(true)} style={{
+                          alignSelf: 'flex-start', height: 38, padding: '0 18px', borderRadius: 'var(--radius-control)',
+                          background: '#e0413c', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', gap: 8,
+                        }}><RotateCcw size={15} />{t('settings.repairBtn')}</button>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 13, color: 'var(--text-hi)' }}>{t('settings.repairConfirm')}</span>
+                          <button onClick={() => { setConfirmReinstall(false); if (selected) onReinstall(selected) }} style={{
+                            height: 34, padding: '0 16px', borderRadius: 'var(--radius-control)', background: '#e0413c', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                          }}>{t('settings.repairConfirmYes')}</button>
+                          <button onClick={() => setConfirmReinstall(false)} style={{
+                            height: 34, padding: '0 16px', borderRadius: 'var(--radius-control)', background: 'var(--bg-elev-3)', color: 'var(--text-mid)', border: '1px solid var(--border)', fontSize: 13, cursor: 'pointer',
+                          }}>{t('common.cancel')}</button>
+                        </div>
+                      )}
+                    </div>
                   </Panel>
                 </div>
               ) : <Hint>{t('nav.pickFirst')}</Hint>
