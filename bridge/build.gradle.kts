@@ -29,6 +29,10 @@ dependencies {
 
     // JSON serialisation
     implementation("com.google.code.gson:gson:2.11.0")
+
+    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.jar {
@@ -50,4 +54,8 @@ tasks.jar {
 
 tasks.withType<JavaCompile> {
     options.encoding = "UTF-8"
+}
+
+tasks.test {
+    useJUnitPlatform()
 }

@@ -28,6 +28,9 @@ pub struct ShellConfig {
     pub last_update_check: Option<String>,
     /// Timestamp of the last successful Varryal.jar download (Unix seconds as string).
     pub jar_downloaded_at: Option<String>,
+    /// SHA-256 of the last fully validated Varryal.jar downloaded over HTTPS.
+    /// Missing for pre-1.0.8 configs; such caches are not used as offline fallback.
+    pub launcher_jar_sha256: Option<String>,
 }
 
 impl ShellConfig {
@@ -67,5 +70,27 @@ impl ShellConfig {
                 && e.arch == entry.arch)
         });
         self.jre_entries.push(entry);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ShellConfig;
+
+    #[test]
+    fn pre_1_0_8_config_deserializes_without_a_cached_jar_digest() {
+        let old = r#"{
+            "jre_entries": [],
+            "locale": "ru",
+            "launcher_jar": "C:/Varryal/Varryal.jar",
+            "last_update_check": null,
+            "jar_downloaded_at": "1710000000"
+        }"#;
+
+        let config: ShellConfig = serde_json::from_str(old).unwrap();
+        assert_eq!(config.locale.as_deref(), Some("ru"));
+        assert!(config.launcher_jar.is_some());
+        assert_eq!(config.jar_downloaded_at.as_deref(), Some("1710000000"));
+        assert_eq!(config.launcher_jar_sha256, None);
     }
 }

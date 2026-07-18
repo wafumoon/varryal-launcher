@@ -276,6 +276,13 @@ async fn bootstrap(app: tauri::AppHandle) -> anyhow::Result<()> {
     let mut jre_mgr = JreManager::new(&mut cfg);
     let launcher_jre = jre_mgr.ensure_version(LAUNCHER_JAVA_MAJOR).await?;
     info!("Launcher JRE (Java {LAUNCHER_JAVA_MAJOR}): {}", launcher_jre.display());
+    let java_exe = launcher_jre
+        .join("bin")
+        .join(if cfg!(windows) { "javaw.exe" } else { "java" });
+
+    // Stop a previous authenticated bridge before replacing Varryal.jar. Windows
+    // additionally verifies and reaps the exact provisioned-JRE process handle.
+    ipc_proxy::clear_stale_bridge(&app, &launcher_jre).await?;
 
     // Save config with updated JRE entry
     cfg.save()?;
@@ -291,15 +298,6 @@ async fn bootstrap(app: tauri::AppHandle) -> anyhow::Result<()> {
 
     // ── Phase: starting — Spawn Java process ─────────────────────────────────
     emit_bootstrap(&app, "starting", "Запуск…", Some(0.6));
-
-    let java_exe = launcher_jre
-        .join("bin")
-        .join(if cfg!(windows) { "javaw.exe" } else { "java" });
-
-    // Kill any leftover bridge from a previous run and clear its handshake, so every
-    // connection this session (handshake wait + per-request) targets the bridge we
-    // are about to spawn — not an orphaned, un-initialised JVM.
-    ipc_proxy::clear_stale_bridge(&app);
 
     let mut child = launch_jar(&java_exe, &jar_path)?;
     // Drain stdout in a background thread to prevent pipe-buffer deadlock.

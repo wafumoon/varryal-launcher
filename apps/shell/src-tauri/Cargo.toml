@@ -66,6 +66,13 @@ uuid = { version = "1", features = ["v4"] }
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }
+
 [profile.release]
 lto           = true
 opt-level     = "s"

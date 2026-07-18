@@ -44,6 +44,8 @@ public class IpcDispatcher {
     private volatile List<ProfileFeatureAPI.ClientProfile> cachedProfiles;
     // Cache last known auth methods from init()
     private volatile List<AuthMethod> cachedAuthMethods;
+    // LauncherBackendAPI.init() registers providers and is not retry-safe.
+    private final SingleFlightFuture<JsonObject> initRequest;
 
     public IpcDispatcher(LauncherBackendAPI api, WsBridgeServer server,
                          String sessionToken, CountDownLatch shutdownLatch) {
@@ -51,6 +53,8 @@ public class IpcDispatcher {
         this.server = server;
         this.sessionToken = sessionToken;
         this.shutdownLatch = shutdownLatch;
+        this.initRequest = new SingleFlightFuture<>(() -> api.init().thenApply(data ->
+                buildInitResult(data != null ? data.methods() : null)));
         api.setCallback(new WsMainCallback(server));
     }
 
@@ -113,25 +117,31 @@ public class IpcDispatcher {
     // ── Handlers ──────────────────────────────────────────────────────────────
 
     private void handleInit(WebSocket conn, String id) {
-        // LauncherInitData is a record: methods() returns List<AuthMethod>
-        api.init().whenComplete((data, err) -> {
-            if (err != null) { sendError(conn, id, "INIT_FAILED", err.getMessage()); return; }
-            JsonArray methods = new JsonArray();
-            if (data != null && data.methods() != null) {
-                cachedAuthMethods = data.methods();
-                for (AuthMethod m : data.methods()) {
-                    JsonObject mo = new JsonObject();
-                    mo.addProperty("name", m.getName());
-                    mo.addProperty("displayName", m.getDisplayName());
-                    mo.addProperty("visible", m.isVisible());
-                    methods.add(mo);
-                }
+        initRequest.get().whenComplete((result, err) -> {
+            if (err != null) {
+                sendError(conn, id, "INIT_FAILED", errorDetail(err));
+                return;
             }
-            JsonObject result = new JsonObject();
-            result.add("authMethods", methods);
-            result.addProperty("updateRequired", false); // LauncherInitData has no updateRequired field
-            sendResult(conn, id, result);
+            sendResult(conn, id, result.deepCopy());
         });
+    }
+
+    private JsonObject buildInitResult(List<AuthMethod> methodsData) {
+        JsonArray methods = new JsonArray();
+        if (methodsData != null) {
+            cachedAuthMethods = methodsData;
+            for (AuthMethod method : methodsData) {
+                JsonObject serialized = new JsonObject();
+                serialized.addProperty("name", method.getName());
+                serialized.addProperty("displayName", method.getDisplayName());
+                serialized.addProperty("visible", method.isVisible());
+                methods.add(serialized);
+            }
+        }
+        JsonObject result = new JsonObject();
+        result.add("authMethods", methods);
+        result.addProperty("updateRequired", false);
+        return result;
     }
 
     private void handleSelectAuthMethod(WebSocket conn, String id, JsonObject params) {
