@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { AnimatePresence, MotionConfig, motion } from 'framer-motion'
 import { AlertCircle, Download, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
 import { applyTheme } from './theme/applyTheme'
@@ -13,7 +13,8 @@ import { ipc, startEventForwarding } from './ipc/client'
 import { useAuthStore } from './store/auth'
 import { useProfilesStore } from './store/profiles'
 import { useSettingsStore } from './store/settings'
-import { classifyRemoteError } from './utils/launcherState'
+import { classifyRemoteError, isCurrentOperation } from './utils/launcherState'
+import { bridgeSessionQueue } from './utils/serialQueue'
 import type { BootstrapStatus, Character, ClientProfile, ClientProfileSettings } from './ipc/types'
 
 type Scene =
@@ -33,11 +34,12 @@ export function App() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('checking')
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
+  const sessionOperationRef = useRef(0)
   const {
     setAuthMethods, setAccountToken, setCachedCharacters, logout,
   } = useAuthStore()
   const { selectProfile, setActiveCharId } = useProfilesStore()
-  const { profileSettings, motionMode } = useSettingsStore()
+  const { motionMode } = useSettingsStore()
 
   useEffect(() => {
     applyTheme()
@@ -143,16 +145,23 @@ export function App() {
   }, [scene.name, initBridge])
 
   const handleLoginSuccess = useCallback((token: string) => {
+    sessionOperationRef.current += 1
     setAccountToken(token)
     setInitialCharacters(undefined)
     setInitialLoadError(null)
     setScene({ name: 'launcher' })
   }, [setAccountToken])
 
-  const goToLauncher = useCallback(() => setScene({ name: 'launcher' }), [])
+  const goToLauncher = useCallback(() => {
+    setInitialCharacters(undefined)
+    setInitialLoadError(null)
+    setScene({ name: 'launcher' })
+  }, [])
 
   const handleLogout = useCallback(() => {
+    sessionOperationRef.current += 1
     logout()
+    void bridgeSessionQueue.enqueue(() => ipc.userExit()).catch(() => {})
     setActiveCharId(null)
     setInitialCharacters(undefined)
     setInitialLoadError(null)
@@ -160,7 +169,9 @@ export function App() {
   }, [logout, setActiveCharId])
 
   const handleSessionInvalid = useCallback(() => {
+    sessionOperationRef.current += 1
     logout()
+    void bridgeSessionQueue.enqueue(() => ipc.userExit()).catch(() => {})
     setActiveCharId(null)
     setInitialCharacters(undefined)
     setInitialLoadError(null)
@@ -168,6 +179,17 @@ export function App() {
   }, [logout, setActiveCharId])
 
   const startDownload = useCallback(async (profile: ClientProfile, mode: 'play' | 'reinstall') => {
+    const accountToken = useAuthStore.getState().accountToken
+    if (!accountToken) {
+      handleSessionInvalid()
+      return
+    }
+    const operation = ++sessionOperationRef.current
+    const isCurrent = () => (
+      isCurrentOperation(operation, sessionOperationRef.current)
+      && useAuthStore.getState().accountToken === accountToken
+    )
+
     selectProfile(profile)
     if (mode === 'reinstall') {
       try {
@@ -175,16 +197,20 @@ export function App() {
       } catch {
         // The download scene retains context and exposes Retry/diagnostics.
       }
+      if (!isCurrent()) return
     }
 
+    const currentSettings = useSettingsStore.getState().profileSettings
     let settings: ClientProfileSettings
-    if (profileSettings?.profileUuid === profile.uuid) {
-      settings = profileSettings
+    if (currentSettings?.profileUuid === profile.uuid) {
+      settings = currentSettings
     } else {
       try {
         const result = await ipc.makeClientProfileSettings(profile.uuid)
+        if (!isCurrent()) return
         settings = { ...result.settings, profileUuid: profile.uuid }
       } catch {
+        if (!isCurrent()) return
         settings = {
           profileUuid: profile.uuid,
           reservedMemoryMb: 4096,
@@ -197,14 +223,17 @@ export function App() {
         }
       }
     }
+    if (!isCurrent()) return
     setScene({ name: 'downloading', profile, settings, mode })
-  }, [profileSettings, selectProfile])
+  }, [handleSessionInvalid, selectProfile])
 
   const handleDownloadComplete = useCallback((readyProfileId: string) => {
-    setScene(previous => previous.name === 'downloading' && previous.mode === 'reinstall'
-      ? { name: 'launcher' }
-      : { name: 'running', readyProfileId })
-  }, [])
+    if (scene.name === 'downloading' && scene.mode === 'reinstall') {
+      goToLauncher()
+      return
+    }
+    setScene({ name: 'running', readyProfileId })
+  }, [scene, goToLauncher])
 
   const handleRetryBootstrap = useCallback(() => {
     setBootstrapStatus(null)

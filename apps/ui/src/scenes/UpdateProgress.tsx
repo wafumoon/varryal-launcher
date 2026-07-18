@@ -5,6 +5,7 @@ import { AlertCircle, ChevronDown, Download, FileSearch, RefreshCw, X } from 'lu
 import { ipc, onEvent } from '../ipc/client'
 import { useDownloadStore } from '../store/download'
 import type { ClientProfile, ClientProfileSettings, DownloadStage, UpdatePhase } from '../ipc/types'
+import { isCurrentOperation, matchesReadyProfile } from '../utils/launcherState'
 
 interface UpdateProgressProps {
   profile: ClientProfile
@@ -18,34 +19,57 @@ export function UpdateProgress({ profile, settings, mode, onComplete, onBack }: 
   const { t } = useTranslation()
   const [showDetails, setShowDetails] = useState(false)
   const initialStartRef = useRef(false)
+  const operationRef = useRef(0)
+  const activeReadyProfileRef = useRef<string | null>(null)
   const {
-    readyProfileId, phase, stage, totalBytes, downloadedBytes, canCancel, error,
+    phase, stage, totalBytes, downloadedBytes, canCancel, error,
     start, setPhase, setStage, setTotal, setDownloaded, setCanCancel, complete, setError, reset,
   } = useDownloadStore()
 
   const beginDownload = useCallback(async () => {
+    const operation = ++operationRef.current
+    activeReadyProfileRef.current = null
     reset()
     setShowDetails(false)
     try {
       const result = await ipc.downloadProfile(profile.uuid, settings)
+      if (!isCurrentOperation(operation, operationRef.current)) return
+      activeReadyProfileRef.current = result.readyProfileId
       start(result.readyProfileId)
     } catch (caught) {
+      if (!isCurrentOperation(operation, operationRef.current)) return
       setError(caught instanceof Error ? caught.message : String(caught))
     }
   }, [profile.uuid, settings, reset, start, setError])
 
   useEffect(() => {
+    const accepts = (data: Record<string, unknown>) => matchesReadyProfile(data, activeReadyProfileRef.current)
     const unsubs = [
-      onEvent('download', 'onStartPhase', data => setPhase((data as { phase: UpdatePhase }).phase)),
-      onEvent('download', 'onStage', data => setStage((data as { stage: DownloadStage }).stage)),
-      onEvent('download', 'onTotalDownload', data => setTotal((data as { bytes: number }).bytes)),
-      onEvent('download', 'onCurrentDownloaded', data => setDownloaded((data as { bytes: number }).bytes)),
-      onEvent('download', 'onCanCancel', () => setCanCancel(true)),
+      onEvent('download', 'onStartPhase', data => {
+        if (accepts(data)) setPhase((data as { phase: UpdatePhase }).phase)
+      }),
+      onEvent('download', 'onStage', data => {
+        if (accepts(data)) setStage((data as { stage: DownloadStage }).stage)
+      }),
+      onEvent('download', 'onTotalDownload', data => {
+        if (accepts(data)) setTotal((data as { bytes: number }).bytes)
+      }),
+      onEvent('download', 'onCurrentDownloaded', data => {
+        if (accepts(data)) setDownloaded((data as { bytes: number }).bytes)
+      }),
+      onEvent('download', 'onCanCancel', data => {
+        if (accepts(data)) setCanCancel(true)
+      }),
       onEvent('download', 'onComplete', data => {
+        if (!accepts(data)) return
+        operationRef.current += 1
+        activeReadyProfileRef.current = null
         complete()
         onComplete((data as { readyProfileId: string }).readyProfileId)
       }),
-      onEvent('download', 'onError', data => setError((data as { error: string }).error)),
+      onEvent('download', 'onError', data => {
+        if (accepts(data)) setError((data as { error: string }).error)
+      }),
     ]
     return () => unsubs.forEach(unsubscribe => unsubscribe())
   }, [complete, onComplete, setCanCancel, setDownloaded, setError, setPhase, setStage, setTotal])
@@ -57,10 +81,13 @@ export function UpdateProgress({ profile, settings, mode, onComplete, onBack }: 
   }, [beginDownload])
 
   const handleCancel = useCallback(async () => {
-    if (readyProfileId) await ipc.cancelDownload(readyProfileId).catch(() => {})
+    const activeReadyProfileId = activeReadyProfileRef.current
+    operationRef.current += 1
+    activeReadyProfileRef.current = null
+    if (activeReadyProfileId) await ipc.cancelDownload(activeReadyProfileId).catch(() => {})
     reset()
     onBack()
-  }, [readyProfileId, reset, onBack])
+  }, [reset, onBack])
 
   const progress = totalBytes > 0 ? Math.min(downloadedBytes / totalBytes, 1) : 0
   const percent = Math.round(progress * 100)

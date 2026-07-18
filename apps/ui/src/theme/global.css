@@ -70,7 +70,13 @@ a:hover { color: var(--primary-hover); }
 .vy-backdrop__image, .vy-backdrop__weather, .vy-backdrop__vignette, .vy-backdrop__grain { position: absolute; inset: -3%; }
 .vy-backdrop__image { background-position: center; background-size: cover; filter: saturate(0.88) contrast(1.04); transform: scale(1.035); animation: vy-scene-drift 22s ease-in-out infinite alternate; }
 .vy-backdrop--arrival .vy-backdrop__image { background-image: url('/varryal-login-myto.png'); background-position: center center; }
-.vy-backdrop--home .vy-backdrop__image { background-image: url('/varryal-home-myto.png'); background-position: center center; }
+.vy-backdrop--home .vy-backdrop__image {
+  background-image: url('/varryal-home-minecraft.png');
+  background-position: center center;
+  filter: saturate(0.72) contrast(0.92) brightness(0.84);
+  transform: scale(1.012);
+  animation: none;
+}
 .vy-backdrop--plain .vy-backdrop__image { background: linear-gradient(145deg, #080a0b, #0e1214 54%, #08090a); animation: none; }
 .vy-backdrop__weather {
   inset: 0;

@@ -16,9 +16,11 @@ import { CREATE_CHARACTER_URL } from '../config'
 import {
   classifyRemoteError,
   formatCharacterName,
+  isCurrentOperation,
   nextOptionalSelection,
   type MotionMode,
 } from '../utils/launcherState'
+import { bridgeSessionQueue, profileSettingsQueue } from '../utils/serialQueue'
 
 type Tab = 'home' | 'mods' | 'settings'
 
@@ -50,8 +52,8 @@ export function Launcher({
   } = useProfilesStore()
   const {
     profileSettings, availableJava, dirty, debugConsole, motionMode,
-    setProfileSettings, updateRamMb, toggleFlag, setOptionals,
-    setSelectedJava, setAvailableJava, setDebugConsole, setMotionMode, markClean,
+    setProfileSettings, updateRamMb, toggleFlag, setOptionals, adoptCurrentOptionalsForSave,
+    rollbackOptionals, setSelectedJava, setAvailableJava, setDebugConsole, setMotionMode, markClean,
   } = useSettingsStore()
 
   const [tab, setTab] = useState<Tab>('home')
@@ -69,8 +71,11 @@ export function Launcher({
   const [modError, setModError] = useState<{ name: string; message: string } | null>(null)
   const [settingsSave, setSettingsSave] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [settingsError, setSettingsError] = useState<string | null>(null)
+  const settingsSaveOperationRef = useRef(0)
   const consumedInitial = useRef(false)
   const autoAuthTried = useRef(false)
+  const loadOperationRef = useRef(0)
+  const authOperationRef = useRef(0)
 
   const focusBestCharacter = useCallback((items: Character[]) => {
     const active = useProfilesStore.getState().activeCharId
@@ -80,16 +85,27 @@ export function Launcher({
   }, [])
 
   const loadCharacters = useCallback(async () => {
+    if (!accountToken) {
+      onSessionInvalid()
+      return
+    }
+    const operation = ++loadOperationRef.current
+    const isCurrent = () => (
+      isCurrentOperation(operation, loadOperationRef.current)
+      && useAuthStore.getState().accountToken === accountToken
+    )
     setLoadingChars(true)
     setError(null)
     setOffline(false)
     try {
-      const result = await ipc.listCharacters(accountToken ?? '')
+      const result = await ipc.listCharacters(accountToken)
+      if (!isCurrent()) return
       const items = result.items ?? []
       setCharacters(items)
       setCachedCharacters(items)
       focusBestCharacter(items)
     } catch (caught) {
+      if (!isCurrent()) return
       const message = caught instanceof Error ? caught.message : String(caught)
       if (classifyRemoteError(message) === 'auth') {
         onSessionInvalid()
@@ -101,7 +117,7 @@ export function Launcher({
       setOffline(true)
       setError(message)
     } finally {
-      setLoadingChars(false)
+      if (isCurrent()) setLoadingChars(false)
     }
   }, [accountToken, focusBestCharacter, onSessionInvalid, setCachedCharacters])
 
@@ -119,6 +135,12 @@ export function Launcher({
     }
     void loadCharacters()
   }, [initialCharacters, initialLoadError, cachedCharacters, focusBestCharacter, loadCharacters])
+
+  useEffect(() => {
+    settingsSaveOperationRef.current += 1
+    setSettingsSave('idle')
+    setSettingsError(null)
+  }, [profileSettings?.profileUuid])
 
   const current = characters[index]
   useEffect(() => {
@@ -154,40 +176,60 @@ export function Launcher({
 
   const authorizeCharacter = useCallback(async (character: Character) => {
     if (!character || !accountToken || offline || authorizingId) return
+    const operation = ++authOperationRef.current
+    const token = accountToken
+    const isCurrent = () => (
+      isCurrentOperation(operation, authOperationRef.current)
+      && useAuthStore.getState().accountToken === token
+    )
     setAuthorizingId(character.id)
     setError(null)
     try {
       await waitForBridgeReady()
-      const session = await ipc.createSession(accountToken, character.id)
-      await ipc.userExit().catch(() => {})
-      await ipc.selectAuthMethod('std')
-      const authResult = await ipc.authorize('', session.minecraftAccessToken)
+      if (!isCurrent()) return
+      const session = await ipc.createSession(token, character.id)
+      if (!isCurrent()) return
+      const authResult = await bridgeSessionQueue.enqueue(async () => {
+        if (!isCurrent()) return null
+        await ipc.userExit().catch(() => {})
+        if (!isCurrent()) return null
+        await ipc.selectAuthMethod('std')
+        if (!isCurrent()) return null
+        return ipc.authorize('', session.minecraftAccessToken)
+      })
+      if (!authResult || !isCurrent()) return
       setUser(authResult.user)
       setActiveCharId(character.id)
       setLastCharId(character.id)
 
       const profilesResult = await ipc.fetchProfiles()
+      if (!isCurrent()) return
       setProfiles(profilesResult.profiles)
       const profile = profilesResult.profiles[0]
       if (profile) {
         selectProfile(profile)
         const settingsResult = await ipc.makeClientProfileSettings(profile.uuid)
+        if (!isCurrent()) return
         setProfileSettings({ ...settingsResult.settings, profileUuid: profile.uuid })
         try {
           const pingResult = await ipc.pingServer(profile.uuid)
+          if (!isCurrent()) return
           setPing(profile.uuid, pingResult.ping)
           setServerReachable(true)
         } catch {
-          setServerReachable(false)
+          if (isCurrent()) setServerReachable(false)
         }
       }
-      ipc.getAvailableJava().then(result => setAvailableJava(result.java)).catch(() => {})
+      ipc.getAvailableJava()
+        .then(result => { if (isCurrent()) setAvailableJava(result.java) })
+        .catch(() => {})
     } catch (caught) {
+      if (!isCurrent()) return
       const message = caught instanceof Error ? caught.message : String(caught)
       setError(message)
       storeSetError(message)
     } finally {
-      setAuthorizingId(null)
+      if (isCurrent()) setAuthorizingId(null)
     }
   }, [
     accountToken, offline, authorizingId, waitForBridgeReady,
@@ -222,54 +264,85 @@ export function Launcher({
   const mods = (selected?.optionalMods ?? []).filter(mod => mod.visible)
 
   const handlePrimaryAction = useCallback(() => {
-    if (!current || offline || authorizingId) return
+    if (!current || offline || authorizingId || pendingMod || settingsSave === 'saving') return
     if (!focusedIsActive) {
       void authorizeCharacter(current)
       return
     }
     if (!ready || !selected) return
     if (profileSettings && dirty) {
-      ipc.saveClientProfileSettings(profileSettings).then(markClean).catch(() => {})
+      const profileUuid = profileSettings.profileUuid
+      adoptCurrentOptionalsForSave(profileUuid)
+      const savedRevision = useSettingsStore.getState().revision
+      void profileSettingsQueue.enqueue(() => ipc.saveClientProfileSettings(profileSettings))
+        .then(() => markClean(profileUuid, savedRevision))
+        .catch(() => {})
     }
     onPlay(selected)
-  }, [current, offline, authorizingId, focusedIsActive, ready, selected, profileSettings, dirty, authorizeCharacter, markClean, onPlay])
+  }, [
+    current, offline, authorizingId, pendingMod, settingsSave, focusedIsActive, ready, selected,
+    profileSettings, dirty, authorizeCharacter, adoptCurrentOptionalsForSave, markClean, onPlay,
+  ])
 
   const handleToggleOptional = useCallback(async (name: string) => {
-    if (pendingMod) return
+    if (pendingMod || settingsSave === 'saving') return
     const currentSettings = useSettingsStore.getState().profileSettings
     if (!currentSettings) return
-    const before = currentSettings.enabledOptionals ?? []
+    const profileUuid = currentSettings.profileUuid
+    const dirtyBefore = useSettingsStore.getState().dirty
+    const before = [...(currentSettings.enabledOptionals ?? [])]
     const after = nextOptionalSelection(before, name)
     setModError(null)
     setPendingMod(name)
     setOptionals(after, true)
+    const savedRevision = useSettingsStore.getState().revision
     try {
-      await ipc.saveClientProfileSettings({ ...currentSettings, enabledOptionals: after })
-      markClean()
+      await profileSettingsQueue.enqueue(() => (
+        ipc.saveClientProfileSettings({ ...currentSettings, enabledOptionals: after })
+      ))
+      markClean(profileUuid, savedRevision)
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught)
-      setOptionals(before, false)
-      setModError({ name, message })
+      rollbackOptionals(profileUuid, before, savedRevision, dirtyBefore)
+      if (useSettingsStore.getState().profileSettings?.profileUuid === profileUuid) {
+        setModError({ name, message })
+      }
     } finally {
       setPendingMod(null)
     }
-  }, [pendingMod, setOptionals, markClean])
+  }, [pendingMod, settingsSave, setOptionals, rollbackOptionals, markClean])
 
   const saveSettings = useCallback(async () => {
-    const settings = useSettingsStore.getState().profileSettings
-    if (!settings || settingsSave === 'saving') return
+    const state = useSettingsStore.getState()
+    const settings = state.profileSettings
+    if (!settings || settingsSave === 'saving' || pendingMod) return
+    const operation = ++settingsSaveOperationRef.current
+    const profileUuid = settings.profileUuid
+    adoptCurrentOptionalsForSave(profileUuid)
+    const savedRevision = useSettingsStore.getState().revision
     setSettingsSave('saving')
     setSettingsError(null)
     try {
-      await ipc.saveClientProfileSettings(settings)
-      markClean()
-      setSettingsSave('saved')
-      window.setTimeout(() => setSettingsSave('idle'), 1400)
+      await profileSettingsQueue.enqueue(() => ipc.saveClientProfileSettings(settings))
+      if (!isCurrentOperation(operation, settingsSaveOperationRef.current)) return
+      markClean(profileUuid, savedRevision)
+      const currentState = useSettingsStore.getState()
+      if (currentState.profileSettings?.profileUuid !== profileUuid) return
+      if (currentState.dirty) {
+        setSettingsSave('idle')
+      } else {
+        setSettingsSave('saved')
+        window.setTimeout(() => {
+          if (isCurrentOperation(operation, settingsSaveOperationRef.current)) setSettingsSave('idle')
+        }, 1400)
+      }
     } catch (caught) {
+      if (!isCurrentOperation(operation, settingsSaveOperationRef.current)) return
+      if (useSettingsStore.getState().profileSettings?.profileUuid !== profileUuid) return
       setSettingsSave('error')
       setSettingsError(caught instanceof Error ? caught.message : String(caught))
     }
-  }, [settingsSave, markClean])
+  }, [settingsSave, pendingMod, adoptCurrentOptionalsForSave, markClean])
 
   const accountName = displayName || user?.username || 'Varryal'
 
@@ -373,7 +446,7 @@ export function Launcher({
               <motion.button
                 className="vy-play-button"
                 onClick={handlePrimaryAction}
-                disabled={!current || offline || Boolean(authorizingId) || (focusedIsActive && !ready)}
+                disabled={!current || offline || Boolean(authorizingId) || Boolean(pendingMod) || settingsSave === 'saving' || (focusedIsActive && !ready)}
                 whileHover={{ y: -1 }}
                 whileTap={{ y: 1 }}
               >
@@ -395,6 +468,7 @@ export function Launcher({
                 mods={mods}
                 enabled={enabledOptionals}
                 pending={pendingMod}
+                blocked={settingsSave === 'saving'}
                 error={modError}
                 onToggle={handleToggleOptional}
               />
@@ -414,6 +488,7 @@ export function Launcher({
                 motionMode={motionMode}
                 dirty={dirty}
                 saveState={settingsSave}
+                saveBlocked={Boolean(pendingMod)}
                 saveError={settingsError}
                 confirmReinstall={confirmReinstall}
                 onRam={updateRamMb}
@@ -504,10 +579,11 @@ function WorkspaceHint({ icon, text, onHome }: { icon: ReactNode; text: string; 
   return <div className="vy-workspace-hint">{icon}<p>{text}</p>{onHome && <button className="vy-secondary-action" onClick={onHome}>К персонажам</button>}</div>
 }
 
-function ModsWorkspace({ mods, enabled, pending, error, onToggle }: {
+function ModsWorkspace({ mods, enabled, pending, blocked, error, onToggle }: {
   mods: OptionalMod[]
   enabled: string[]
   pending: string | null
+  blocked: boolean
   error: { name: string; message: string } | null
   onToggle: (name: string) => Promise<void>
 }) {
@@ -530,7 +606,7 @@ function ModsWorkspace({ mods, enabled, pending, error, onToggle }: {
               <div><strong>{mod.name}</strong>{mod.description && <p>{mod.description}</p>}{error?.name === mod.name && <span className="vy-row-error"><AlertCircle size={13} />{error.message}</span>}</div>
               <ToggleSwitch
                 value={enabled.includes(mod.name)}
-                disabled={Boolean(pending)}
+                disabled={Boolean(pending) || blocked}
                 loading={pending === mod.name}
                 onChange={() => void onToggle(mod.name)}
                 label={`Переключить ${mod.name}`}
@@ -545,7 +621,7 @@ function ModsWorkspace({ mods, enabled, pending, error, onToggle }: {
 
 function SettingsWorkspace({
   ram, flags, availableJava, selectedJava, debugConsole, motionMode, dirty,
-  saveState, saveError, confirmReinstall,
+  saveState, saveBlocked, saveError, confirmReinstall,
   onRam, onFullscreen, onJava, onDebug, onMotion, onSave, onConfirmReinstall, onReinstall,
 }: {
   ram: number
@@ -556,6 +632,7 @@ function SettingsWorkspace({
   motionMode: MotionMode
   dirty: boolean
   saveState: 'idle' | 'saving' | 'saved' | 'error'
+  saveBlocked: boolean
   saveError: string | null
   confirmReinstall: boolean
   onRam: (value: number) => void
@@ -608,7 +685,7 @@ function SettingsWorkspace({
 
       <footer className="vy-settings-savebar">
         <div>{saveError && <span className="vy-row-error"><AlertCircle size={13} />{saveError}</span>}{!saveError && <span>{dirty ? 'Есть несохранённые изменения' : saveState === 'saved' ? 'Настройки сохранены' : 'Все изменения сохранены'}</span>}</div>
-        <button className="vy-secondary-action vy-secondary-action--bright" onClick={() => void onSave()} disabled={!dirty || saveState === 'saving'}>
+        <button className="vy-secondary-action vy-secondary-action--bright" onClick={() => void onSave()} disabled={!dirty || saveState === 'saving' || saveBlocked}>
           {saveState === 'saving' ? <Loader2 className="vy-spin" size={15} /> : saveState === 'saved' ? <Check size={15} /> : <Save size={15} />}
           {saveState === 'saving' ? 'Сохраняем…' : saveState === 'saved' ? 'Сохранено' : 'Сохранить'}
         </button>

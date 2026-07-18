@@ -10,5 +10,9 @@
     "declaration": false,
     "sourceMap": false
   },
-  "include": ["src/utils/launcherState.ts"]
+  "include": [
+    "src/utils/launcherState.ts",
+    "src/utils/serialQueue.ts",
+    "src/store/settings.ts"
+  ]
 }

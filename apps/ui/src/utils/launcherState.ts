@@ -39,3 +39,44 @@ export function resolveMotionReduction(mode: MotionMode, systemReduced: boolean)
   if (mode === 'full') return false
   return systemReduced
 }
+
+export function isCurrentOperation(operation: number, currentOperation: number): boolean {
+  return operation === currentOperation
+}
+
+export function matchesReadyProfile(data: unknown, activeReadyProfileId: string | null): boolean {
+  if (!activeReadyProfileId || !data || typeof data !== 'object') return false
+  return (data as { readyProfileId?: unknown }).readyProfileId === activeReadyProfileId
+}
+
+export function canAcknowledgeSettingsSave(
+  savedProfileUuid: string,
+  savedRevision: number,
+  currentProfileUuid: string | undefined,
+  currentRevision: number,
+): boolean {
+  return savedProfileUuid === currentProfileUuid && savedRevision === currentRevision
+}
+
+export function dirtyAfterOptionalRollback(
+  savedRevision: number,
+  currentRevision: number,
+  currentDirty: boolean,
+  dirtyBeforeOptimisticChange: boolean,
+): boolean {
+  return savedRevision === currentRevision ? dirtyBeforeOptimisticChange : currentDirty
+}
+
+export function canRollbackOptionalSelection(
+  savedOptionalRevision: number,
+  currentOptionalRevision: number | undefined,
+): boolean {
+  return savedOptionalRevision === currentOptionalRevision
+}
+
+export function resolveOptionalRevisionOnProfileLoad(
+  currentOptionalRevision: number | undefined,
+  profileLoadRevision: number,
+): number {
+  return currentOptionalRevision ?? profileLoadRevision
+}

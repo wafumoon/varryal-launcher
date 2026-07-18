@@ -5,6 +5,7 @@ import { ArrowLeft, Circle, Square, Terminal } from 'lucide-react'
 import { ipc, onEvent } from '../ipc/client'
 import { useRunStore } from '../store/run'
 import { useSettingsStore } from '../store/settings'
+import { matchesReadyProfile } from '../utils/launcherState'
 
 interface RunningProps {
   readyProfileId: string
@@ -29,24 +30,32 @@ export function Running({ readyProfileId, onExit }: RunningProps) {
   const startedProfileRef = useRef<string | null>(null)
 
   useEffect(() => {
+    const accepts = (data: Record<string, unknown>) => matchesReadyProfile(data, readyProfileId)
     const unsubs = [
-      onEvent('run', 'onStarted', () => {
+      onEvent('run', 'onStarted', data => {
+        if (!accepts(data)) return
         if (!useSettingsStore.getState().debugConsole) {
           ipc.hideToTray().catch(() => {})
           onExit()
         }
       }),
-      onEvent('run', 'onCanTerminate', () => setCanTerminate(true)),
+      onEvent('run', 'onCanTerminate', data => {
+        if (accepts(data)) setCanTerminate(true)
+      }),
       onEvent('run', 'onNormalOutput', data => {
+        if (!accepts(data)) return
         base64ToUtf8((data as { base64: string }).base64).split('\n').forEach(line => line && appendLine(line))
       }),
       onEvent('run', 'onErrorOutput', data => {
+        if (!accepts(data)) return
         base64ToUtf8((data as { base64: string }).base64).split('\n').forEach(line => line && appendLine(`[ERR] ${line}`))
       }),
-      onEvent('run', 'onFinished', data => setExited((data as { code: number }).code)),
+      onEvent('run', 'onFinished', data => {
+        if (accepts(data)) setExited((data as { code: number }).code)
+      }),
     ]
     return () => unsubs.forEach(unsubscribe => unsubscribe())
-  }, [onExit, setCanTerminate, appendLine, setExited])
+  }, [readyProfileId, onExit, setCanTerminate, appendLine, setExited])
 
   useEffect(() => {
     if (startedProfileRef.current === readyProfileId) return
