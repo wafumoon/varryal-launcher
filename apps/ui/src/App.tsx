@@ -1,18 +1,20 @@
 import { useState, useEffect, useCallback } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, MotionConfig, motion } from 'framer-motion'
+import { AlertCircle, Download, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
 import { applyTheme } from './theme/applyTheme'
 import { Titlebar } from './components/Titlebar'
+import { SceneBackdrop } from './components/SceneBackdrop'
+import { ParticleField } from './components/ParticleField'
 import { Login } from './scenes/Login'
 import { Launcher } from './scenes/Launcher'
 import { UpdateProgress } from './scenes/UpdateProgress'
 import { Running } from './scenes/Running'
-import { ParticleField } from './components/ParticleField'
 import { ipc, startEventForwarding } from './ipc/client'
 import { useAuthStore } from './store/auth'
 import { useProfilesStore } from './store/profiles'
 import { useSettingsStore } from './store/settings'
-import { Loader2, AlertCircle } from 'lucide-react'
-import type { ClientProfile, ClientProfileSettings, BootstrapStatus } from './ipc/types'
+import { classifyRemoteError } from './utils/launcherState'
+import type { BootstrapStatus, Character, ClientProfile, ClientProfileSettings } from './ipc/types'
 
 type Scene =
   | { name: 'preparing' }
@@ -21,77 +23,129 @@ type Scene =
   | { name: 'downloading'; profile: ClientProfile; settings: ClientProfileSettings; mode: 'play' | 'reinstall' }
   | { name: 'running'; readyProfileId: string }
 
+type UpdateStatus = 'checking' | 'current' | 'available' | 'installing' | 'error'
+
 export function App() {
   const [scene, setScene] = useState<Scene>({ name: 'preparing' })
   const [bootstrapStatus, setBootstrapStatus] = useState<BootstrapStatus | null>(null)
-  const [update, setUpdate] = useState<{ version: string } | null>(null)
-  const [updating, setUpdating] = useState(false)
-  const { setAuthMethods, setUser, setAccountToken, logout, accountToken } = useAuthStore()
+  const [initialCharacters, setInitialCharacters] = useState<Character[] | undefined>(undefined)
+  const [initialLoadError, setInitialLoadError] = useState<string | null>(null)
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('checking')
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
+  const [updateError, setUpdateError] = useState<string | null>(null)
+  const {
+    setAuthMethods, setAccountToken, setCachedCharacters, logout,
+  } = useAuthStore()
   const { selectProfile, setActiveCharId } = useProfilesStore()
-  const { profileSettings } = useSettingsStore()
+  const { profileSettings, motionMode } = useSettingsStore()
 
-  // Apply theme + start Java-bridge event forwarding on mount.
-  // startEventForwarding() also kicks off the mock bootstrap sequence in dev.
-  useEffect(() => { applyTheme(); startEventForwarding() }, [])
-
-  // One-shot auto-update check on launch (Tauri only; mock returns null). If a
-  // newer signed release exists, surface the banner below.
   useEffect(() => {
-    ipc.checkForUpdate().then(v => { if (v) setUpdate({ version: v }) }).catch(() => {})
+    applyTheme()
+    startEventForwarding()
   }, [])
 
-  // Track bootstrap status for the Preparing UI ONLY. Scene advancement is driven
-  // solely by the init() poll below — so init() (which loads the bridge's auth
-  // methods) ALWAYS runs before we leave Preparing. Otherwise a persisted token
-  // would skip straight to character select with the bridge un-initialised, and
-  // selectAuthMethod would no-op → "not allowed before select authMethod".
-  useEffect(() => {
-    const unsub = ipc.listenBootstrapStatus(setBootstrapStatus)
-    return unsub
+  const checkUpdate = useCallback(async () => {
+    setUpdateStatus('checking')
+    setUpdateError(null)
+    try {
+      const version = await ipc.checkForUpdate()
+      if (version) {
+        setUpdateVersion(version)
+        setUpdateStatus('available')
+      } else {
+        setUpdateVersion(null)
+        setUpdateStatus('current')
+      }
+    } catch (caught) {
+      setUpdateError(caught instanceof Error ? caught.message : String(caught))
+      setUpdateStatus('error')
+    }
   }, [])
 
-  // While preparing, poll init() until the Java bridge answers. Only then advance —
-  // this guarantees the bridge is fully initialised (auth methods loaded) before any
-  // auth call, and also covers a missed `ready` event when the JRE is already cached.
+  useEffect(() => { void checkUpdate() }, [checkUpdate])
+
+  const installUpdate = useCallback(async () => {
+    setUpdateStatus('installing')
+    setUpdateError(null)
+    try {
+      await ipc.installUpdate()
+    } catch (caught) {
+      setUpdateError(caught instanceof Error ? caught.message : String(caught))
+      setUpdateStatus('error')
+    }
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = ipc.listenBootstrapStatus(setBootstrapStatus)
+    return unsubscribe
+  }, [])
+
   useEffect(() => {
     if (scene.name !== 'preparing') return
     let cancelled = false
     let timer: ReturnType<typeof setTimeout>
+
     const tick = async () => {
       try {
         const initData = await ipc.init()
         if (cancelled) return
         setAuthMethods(initData.authMethods)
-        const tok = useAuthStore.getState().accountToken
-        setScene(tok ? { name: 'launcher' } : { name: 'login' })
+        const token = useAuthStore.getState().accountToken
+        if (!token) {
+          setScene({ name: 'login' })
+          return
+        }
+
+        try {
+          const result = await ipc.listCharacters(token)
+          if (cancelled) return
+          const items = result.items ?? []
+          setCachedCharacters(items)
+          setInitialCharacters(items)
+          setInitialLoadError(null)
+          setScene({ name: 'launcher' })
+        } catch (caught) {
+          if (cancelled) return
+          const message = caught instanceof Error ? caught.message : String(caught)
+          if (classifyRemoteError(message) === 'auth') {
+            logout()
+            setActiveCharId(null)
+            setScene({ name: 'login' })
+          } else {
+            setInitialCharacters(useAuthStore.getState().cachedCharacters)
+            setInitialLoadError(message)
+            setScene({ name: 'launcher' })
+          }
+        }
       } catch {
         if (!cancelled) timer = setTimeout(tick, 1200)
       }
     }
-    timer = setTimeout(tick, 400)
-    return () => { cancelled = true; clearTimeout(timer) }
-  }, [scene.name, setAuthMethods])
 
-  // When inside Tauri, also call init() to set up auth methods for the bridge.
-  // This runs once after bootstrap completes (on login scene enter).
+    timer = setTimeout(tick, 400)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [scene.name, setAuthMethods, setCachedCharacters, logout, setActiveCharId])
+
   const initBridge = useCallback(async () => {
     try {
       const initData = await ipc.init()
       setAuthMethods(initData.authMethods)
     } catch {
-      // Non-fatal: if bridge isn't up yet the auth flow will surface the error.
+      // The login flow displays a concrete bridge/network error if it stays unavailable.
     }
   }, [setAuthMethods])
 
   useEffect(() => {
-    if (scene.name === 'login') initBridge()
+    if (scene.name === 'login') void initBridge()
   }, [scene.name, initBridge])
 
-  // ── Scene transitions ─────────────────────────────────────────────────────
-
-  /** Called by Login when web-auth callback delivers the account token. */
   const handleLoginSuccess = useCallback((token: string) => {
     setAccountToken(token)
+    setInitialCharacters(undefined)
+    setInitialLoadError(null)
     setScene({ name: 'launcher' })
   }, [setAccountToken])
 
@@ -100,261 +154,173 @@ export function App() {
   const handleLogout = useCallback(() => {
     logout()
     setActiveCharId(null)
+    setInitialCharacters(undefined)
+    setInitialLoadError(null)
+    setScene({ name: 'login' })
+  }, [logout, setActiveCharId])
+
+  const handleSessionInvalid = useCallback(() => {
+    logout()
+    setActiveCharId(null)
+    setInitialCharacters(undefined)
+    setInitialLoadError(null)
     setScene({ name: 'login' })
   }, [logout, setActiveCharId])
 
   const startDownload = useCallback(async (profile: ClientProfile, mode: 'play' | 'reinstall') => {
     selectProfile(profile)
     if (mode === 'reinstall') {
-      try { await ipc.reinstallProfile(profile.uuid) } catch { /* surfaced by the download step if files still missing */ }
+      try {
+        await ipc.reinstallProfile(profile.uuid)
+      } catch {
+        // The download scene retains context and exposes Retry/diagnostics.
+      }
     }
+
     let settings: ClientProfileSettings
     if (profileSettings?.profileUuid === profile.uuid) {
       settings = profileSettings
     } else {
       try {
-        const res = await ipc.makeClientProfileSettings(profile.uuid)
-        settings = { ...res.settings, profileUuid: profile.uuid }
+        const result = await ipc.makeClientProfileSettings(profile.uuid)
+        settings = { ...result.settings, profileUuid: profile.uuid }
       } catch {
         settings = {
           profileUuid: profile.uuid,
           reservedMemoryMb: 4096,
-          flags: { AUTO_ENTER: false, FULLSCREEN: false, LINUX_WAYLAND_SUPPORT: false, DEBUG_SKIP_FILE_MONITOR: false },
+          flags: {
+            AUTO_ENTER: false,
+            FULLSCREEN: false,
+            LINUX_WAYLAND_SUPPORT: false,
+            DEBUG_SKIP_FILE_MONITOR: false,
+          },
         }
       }
     }
     setScene({ name: 'downloading', profile, settings, mode })
   }, [profileSettings, selectProfile])
 
-  const handlePlay = useCallback((profile: ClientProfile) => startDownload(profile, 'play'), [startDownload])
-  const handleReinstall = useCallback((profile: ClientProfile) => startDownload(profile, 'reinstall'), [startDownload])
-
   const handleDownloadComplete = useCallback((readyProfileId: string) => {
-    setScene(prev => prev.name === 'downloading' && prev.mode === 'reinstall'
+    setScene(previous => previous.name === 'downloading' && previous.mode === 'reinstall'
       ? { name: 'launcher' }
       : { name: 'running', readyProfileId })
   }, [])
 
-  const handleGameExit = useCallback(() => {
-    setScene({ name: 'launcher' })
-  }, [])
-
-  // ── Retry bootstrap after error ───────────────────────────────────────────
-
   const handleRetryBootstrap = useCallback(() => {
-    // Reset to preparing — the Rust side already failed so there's nothing to
-    // retry without a full restart, but this gives the user a clear message.
-    // In practice they need to restart the launcher.
     setBootstrapStatus(null)
     setScene({ name: 'preparing' })
   }, [])
 
-  // Download + install the pending update, then the app restarts itself.
-  const doUpdate = useCallback(() => {
-    setUpdating(true)
-    ipc.installUpdate().catch(() => setUpdating(false))
-  }, [])
-
-  // ── Render ────────────────────────────────────────────────────────────────
+  const backdropVariant = scene.name === 'preparing' || scene.name === 'login'
+    ? 'arrival'
+    : scene.name === 'running'
+      ? 'plain'
+      : 'home'
+  const reducedMotion = motionMode === 'reduced' ? 'always' : motionMode === 'full' ? 'never' : 'user'
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100vh',
-      background: 'transparent',
-      overflow: 'hidden',
-      position: 'relative',
-    }}>
-      <ParticleField />
-      <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-        <Titlebar />
+    <MotionConfig reducedMotion={reducedMotion}>
+      <div className="vy-app" data-motion={motionMode}>
+        <SceneBackdrop variant={backdropVariant} />
+        <ParticleField variant={backdropVariant} />
+        <div className="vy-shell">
+          <Titlebar />
+          <AnimatePresence mode="wait">
+            {scene.name === 'preparing' && <PreparingScene key="preparing" status={bootstrapStatus} onRetry={handleRetryBootstrap} />}
+            {scene.name === 'login' && <Login key="login" onSuccess={handleLoginSuccess} />}
+            {scene.name === 'launcher' && (
+              <Launcher
+                key="launcher"
+                initialCharacters={initialCharacters}
+                initialLoadError={initialLoadError}
+                onPlay={(profile) => void startDownload(profile, 'play')}
+                onReinstall={(profile) => void startDownload(profile, 'reinstall')}
+                onLogout={handleLogout}
+                onSessionInvalid={handleSessionInvalid}
+              />
+            )}
+            {scene.name === 'downloading' && (
+              <UpdateProgress
+                key="downloading"
+                profile={scene.profile}
+                settings={scene.settings}
+                mode={scene.mode}
+                onComplete={handleDownloadComplete}
+                onBack={goToLauncher}
+              />
+            )}
+            {scene.name === 'running' && <Running key="running" readyProfileId={scene.readyProfileId} onExit={goToLauncher} />}
+          </AnimatePresence>
+        </div>
 
-        {/* ── Auto-update banner ──────────────────────────────────────── */}
-        {update && (
-          <div style={{ position: 'absolute', top: 44, left: 0, right: 0, zIndex: 60, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
-            <motion.div
-              initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-              style={{
-                pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 12,
-                background: 'var(--bg-elev-2)', border: '1px solid var(--border-strong)',
-                borderRadius: 'var(--radius-control)', padding: '8px 8px 8px 16px', boxShadow: 'var(--glow-primary)',
-              }}
-            >
-              <span style={{ fontSize: 13, color: 'var(--text-hi)' }}>
-                {updating ? 'Обновление…' : `Доступно обновление ${update.version}`}
-              </span>
-              {!updating && (
-                <>
-                  <button onClick={doUpdate} style={{ height: 30, padding: '0 14px', borderRadius: 'var(--radius-control)', background: 'var(--primary)', color: 'var(--on-primary)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Обновить</button>
-                  <button onClick={() => setUpdate(null)} style={{ height: 30, padding: '0 12px', borderRadius: 'var(--radius-control)', background: 'transparent', color: 'var(--text-mid)', fontSize: 13, cursor: 'pointer' }}>Позже</button>
-                </>
-              )}
-            </motion.div>
-          </div>
-        )}
-
-        <AnimatePresence mode="wait">
-        {/* ── Preparing — bootstrap in progress or error ───────────────── */}
-        {scene.name === 'preparing' && (
-          <PreparingScene
-            key="preparing"
-            status={bootstrapStatus}
-            onRetry={handleRetryBootstrap}
+        {updateStatus !== 'current' && (
+          <UpdateGate
+            status={updateStatus}
+            version={updateVersion}
+            error={updateError}
+            onCheck={checkUpdate}
+            onInstall={installUpdate}
           />
         )}
-
-        {/* ── Login — browser OAuth redirect ───────────────────────────── */}
-        {scene.name === 'login' && (
-          <Login key="login" onSuccess={handleLoginSuccess} />
-        )}
-
-        {/* ── Character selection ───────────────────────────────────────── */}
-        {/* ── Launcher — tabbed: character / settings / mods + play ─────── */}
-        {scene.name === 'launcher' && (
-          <Launcher
-            key="launcher"
-            onPlay={handlePlay}
-            onReinstall={handleReinstall}
-            onLogout={handleLogout}
-          />
-        )}
-
-        {scene.name === 'downloading' && (
-          <UpdateProgress
-            key="downloading"
-            profile={scene.profile}
-            settings={scene.settings}
-            onComplete={handleDownloadComplete}
-            onBack={goToLauncher}
-          />
-        )}
-
-        {scene.name === 'running' && (
-          <Running
-            key="running"
-            readyProfileId={scene.readyProfileId}
-            onExit={handleGameExit}
-          />
-        )}
-      </AnimatePresence>
       </div>
-    </div>
+    </MotionConfig>
   )
 }
 
-// ── Preparing scene ────────────────────────────────────────────────────────────
-
 const PHASE_LABELS: Record<string, string> = {
-  jre:        'Скачивание Java…',
-  jar:        'Скачивание клиента…',
-  starting:   'Запуск…',
-  connecting: 'Подключение…',
-  ready:      'Готово',
+  jre: 'Подготавливаем Java',
+  jar: 'Проверяем launcher core',
+  starting: 'Запускаем службы',
+  connecting: 'Устанавливаем защищённое соединение',
+  ready: 'Готово',
 }
 
-function PreparingScene({
-  status,
-  onRetry,
-}: {
-  status: BootstrapStatus | null
-  onRetry: () => void
-}) {
+function PreparingScene({ status, onRetry }: { status: BootstrapStatus | null; onRetry: () => void }) {
   const isError = status?.phase === 'error'
-  const label = status ? (PHASE_LABELS[status.phase] ?? status.message) : 'Инициализация…'
+  const label = status ? (PHASE_LABELS[status.phase] ?? status.message) : 'Инициализация лаунчера'
   const progress = status?.progress ?? null
+  const percent = progress === null ? null : Math.round(progress * 100)
 
   return (
-    <motion.div
-      key="preparing"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 20,
-        padding: 40,
-      }}
-    >
-      {/* Brand emblem (real site logo) — or an error glyph */}
-      {isError ? (
-        <div style={{
-          width: 56, height: 56, borderRadius: 16,
-          background: 'rgba(255,154,128,0.12)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          marginBottom: 4,
-        }}>
-          <AlertCircle size={28} color="var(--error)" />
+    <motion.main className="vy-preparing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <div className={`vy-preparing-card${isError ? ' is-error' : ''}`}>
+        <div className="vy-preparing-card__brand"><img src="/varryal-logo.png" width={54} height={54} alt="Varryal" /><div><span>VARRYAL</span><small>Возвращение на Острог</small></div></div>
+        <div className="vy-preparing-card__status">
+          {isError ? <AlertCircle size={22} /> : <Loader2 className="vy-spin" size={22} />}
+          <div><strong>{isError ? 'Не удалось запустить лаунчер' : label}</strong><span>{isError ? status?.message : 'Это может занять немного времени при первом запуске.'}</span></div>
+          {percent !== null && !isError && <b>{percent}%</b>}
         </div>
-      ) : (
-        <img
-          src="/varryal-logo.png"
-          alt="Varryal"
-          width={64}
-          height={64}
-          style={{ marginBottom: 4, filter: 'drop-shadow(0 0 14px rgba(101,212,223,0.35))' }}
-        />
-      )}
+        {!isError && progress !== null && <div className="vy-progress-track"><motion.i animate={{ width: `${percent}%` }} transition={{ duration: 0.35 }} /></div>}
+        {isError && <button className="vy-secondary-action" onClick={onRetry}><RefreshCw size={15} />Повторить</button>}
+      </div>
+    </motion.main>
+  )
+}
 
-      {/* Spinner or error icon */}
-      {!isError && (
-        <Loader2
-          size={28}
-          style={{ color: 'var(--primary)', animation: 'spin 1s linear infinite' }}
-        />
-      )}
+function UpdateGate({ status, version, error, onCheck, onInstall }: {
+  status: UpdateStatus
+  version: string | null
+  error: string | null
+  onCheck: () => Promise<void>
+  onInstall: () => Promise<void>
+}) {
+  const checking = status === 'checking'
+  const installing = status === 'installing'
+  const failed = status === 'error'
 
-      {/* Phase label */}
-      <p style={{
-        fontSize: 14,
-        color: isError ? 'var(--error)' : 'var(--text-mid)',
-        textAlign: 'center',
-        maxWidth: 320,
-        lineHeight: 1.5,
-      }}>
-        {isError ? (status?.message ?? 'Ошибка запуска') : label}
-      </p>
-
-      {/* Progress bar */}
-      {!isError && progress !== null && (
-        <div style={{
-          width: 240, height: 4,
-          background: 'var(--bg-elev-3)',
-          borderRadius: 2,
-          overflow: 'hidden',
-        }}>
-          <motion.div
-            animate={{ width: `${Math.round(progress * 100)}%` }}
-            transition={{ duration: 0.4, ease: 'easeOut' }}
-            style={{ height: '100%', background: 'var(--primary)', borderRadius: 2 }}
-          />
+  return (
+    <motion.div className="vy-update-gate" initial={{ opacity: 0 }} animate={{ opacity: 1 }} role="dialog" aria-modal="true" aria-labelledby="update-title">
+      <div className="vy-update-gate__card">
+        <span className="vy-update-gate__icon">{failed ? <AlertCircle size={24} /> : installing ? <Download size={24} /> : checking ? <Loader2 className="vy-spin" size={24} /> : <ShieldCheck size={24} />}</span>
+        <div>
+          <span className="vy-eyebrow">Проверка совместимости</span>
+          <h2 id="update-title">{checking ? 'Проверяем версию лаунчера' : installing ? 'Устанавливаем обновление' : failed ? 'Проверка не завершена' : `Требуется обновление ${version ?? ''}`}</h2>
+          <p>{failed ? (error || 'Не удалось проверить или установить обновление.') : status === 'available' ? 'Обновление обязательно для запуска игры и будет проверено перед установкой.' : 'Не закрывайте лаунчер. После установки он перезапустится автоматически.'}</p>
         </div>
-      )}
-
-      {/* Retry button on error */}
-      {isError && (
-        <button
-          onClick={onRetry}
-          style={{
-            marginTop: 8,
-            height: 38, padding: '0 24px',
-            borderRadius: 'var(--radius-control)',
-            background: 'var(--bg-elev-3)',
-            border: '1px solid var(--border)',
-            color: 'var(--text-mid)',
-            fontSize: 13, cursor: 'pointer',
-          }}
-        >
-          Перезапустить
-        </button>
-      )}
-
-      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+        {status === 'available' && <button className="vy-primary-action" onClick={() => void onInstall()}><Download size={17} />Обновить лаунчер</button>}
+        {failed && <button className="vy-secondary-action" onClick={() => void (version ? onInstall() : onCheck())}><RefreshCw size={15} />Повторить</button>}
+        {(checking || installing) && <div className="vy-update-gate__line"><i /></div>}
+      </div>
     </motion.div>
   )
 }

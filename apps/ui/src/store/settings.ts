@@ -1,31 +1,24 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { ClientProfileSettings, JavaVersion } from '../ipc/types'
+import type { MotionMode } from '../utils/launcherState'
 
 interface SettingsStore {
   profileSettings: ClientProfileSettings | null
   availableJava: JavaVersion[]
   dirty: boolean
-  /**
-   * Per-profile optional-mod selection, persisted to localStorage so the choice
-   * survives a relaunch / re-auth (D26). Keyed by profileUuid. This is the source
-   * of truth on load: setProfileSettings() restores from here over whatever the
-   * bridge returns.
-   */
   optionalsByProfile: Record<string, string[]>
-  /**
-   * Show the in-game console after launch (debug mode). When false (default), the
-   * launcher hides to the system tray while the game runs (D25). App-level, persisted.
-   */
   debugConsole: boolean
-  // actions
+  motionMode: MotionMode
   setProfileSettings: (s: ClientProfileSettings) => void
   updateRamMb: (mb: number) => void
   toggleFlag: (flag: keyof ClientProfileSettings['flags']) => void
   toggleOptional: (name: string) => void
+  setOptionals: (enabled: string[], dirty?: boolean) => void
   setAvailableJava: (java: JavaVersion[]) => void
   setSelectedJava: (index: number, path: string) => void
   setDebugConsole: (v: boolean) => void
+  setMotionMode: (mode: MotionMode) => void
   markClean: () => void
 }
 
@@ -37,9 +30,8 @@ export const useSettingsStore = create<SettingsStore>()(
       dirty: false,
       optionalsByProfile: {},
       debugConsole: false,
+      motionMode: 'system',
       setProfileSettings: (s) => set(st => {
-        // Restore the user's saved optional-mod selection for this profile, if any,
-        // so toggles survive relaunches even when the bridge returns defaults.
         const saved = st.optionalsByProfile[s.profileUuid]
         const profileSettings = saved ? { ...s, enabledOptionals: saved } : s
         return { profileSettings, dirty: false }
@@ -69,6 +61,15 @@ export const useSettingsStore = create<SettingsStore>()(
           optionalsByProfile: { ...st.optionalsByProfile, [uuid]: next },
         }
       }),
+      setOptionals: (enabled, dirty = true) => set(st => {
+        if (!st.profileSettings) return st
+        const uuid = st.profileSettings.profileUuid
+        return {
+          dirty,
+          profileSettings: { ...st.profileSettings, enabledOptionals: [...enabled] },
+          optionalsByProfile: { ...st.optionalsByProfile, [uuid]: [...enabled] },
+        }
+      }),
       setAvailableJava: (java) => set({ availableJava: java }),
       setSelectedJava: (index, path) => set(st => ({
         dirty: true,
@@ -77,14 +78,22 @@ export const useSettingsStore = create<SettingsStore>()(
           : null,
       })),
       setDebugConsole: (v) => set({ debugConsole: v }),
+      setMotionMode: (motionMode) => set({ motionMode }),
       markClean: () => set({ dirty: false }),
     }),
     {
       name: 'varryal-settings',
       storage: createJSONStorage(() => localStorage),
-      // The per-profile optional-mod selection and the debug-console preference
-      // persist; the rest is reloaded from the bridge each session.
-      partialize: (s) => ({ optionalsByProfile: s.optionalsByProfile, debugConsole: s.debugConsole }),
+      partialize: (s) => ({
+        optionalsByProfile: s.optionalsByProfile,
+        debugConsole: s.debugConsole,
+        motionMode: s.motionMode,
+      }),
+      version: 2,
+      migrate: (persisted) => {
+        const state = (persisted ?? {}) as Partial<SettingsStore>
+        return { ...state, motionMode: state.motionMode ?? 'system' }
+      },
     },
   ),
 )

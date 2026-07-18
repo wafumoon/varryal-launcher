@@ -1,33 +1,33 @@
 {
-  "name": "Varryal — Dark Fantasy",
+  "name": "Varryal — Ostrog",
   "colors": {
-    "bgBase":       "#07090e",
-    "bgElev1":      "#0e1218",
-    "bgElev2":      "#141922",
-    "bgElev3":      "#1c2330",
-    "border":       "#c9935430",
-    "borderStrong": "#c9935466",
-    "primary":      "#f0c982",
-    "primaryHover": "#f7d99c",
-    "primaryPress": "#d9b061",
-    "onPrimary":    "#0a0c11",
-    "accent":       "#d18948",
-    "rune":         "#65d4df",
-    "success":      "#b3dfa6",
-    "warn":         "#e0a555",
-    "error":        "#ff9a80",
-    "textHi":       "#f5eadb",
-    "textMid":      "#c8c2b6",
-    "textLo":       "#8a8678"
+    "bgBase":       "#080a0b",
+    "bgElev1":      "#101315",
+    "bgElev2":      "#171b1d",
+    "bgElev3":      "#202628",
+    "border":       "#b9986433",
+    "borderStrong": "#c5a36a66",
+    "primary":      "#ddb36b",
+    "primaryHover": "#ebc783",
+    "primaryPress": "#c4934d",
+    "onPrimary":    "#11100d",
+    "accent":       "#a96535",
+    "rune":         "#b8c1bb",
+    "success":      "#a9c89e",
+    "warn":         "#daa35d",
+    "error":        "#ef8f79",
+    "textHi":       "#f2eee6",
+    "textMid":      "#c2c0b9",
+    "textLo":       "#878b86"
   },
   "font": {
-    "ui":      "Montserrat, system-ui, sans-serif",
-    "display": "'Playfair Display', Georgia, serif",
-    "mono":    "'JetBrains Mono', ui-monospace, monospace"
+    "ui":      "'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif",
+    "display": "Georgia, 'Times New Roman', serif",
+    "mono":    "'Cascadia Mono', 'Consolas', ui-monospace, monospace"
   },
   "radius": {
-    "control": 8,
-    "card":    12,
-    "modal":   14
+    "control": 6,
+    "card": 9,
+    "modal": 10
   }
 }

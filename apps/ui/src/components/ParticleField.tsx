@@ -1,61 +1,87 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useSettingsStore } from '../store/settings'
+import { resolveMotionReduction } from '../utils/launcherState'
 
-/**
- * Ambient drifting motes (gold + rune-teal) that float gently upward — a subtle
- * "living embers" layer over the hero backdrop. Pure 2D canvas, ~46 particles,
- * pointer-events none. Sits behind the app content (z-index 0).
- */
-export function ParticleField() {
+export function ParticleField({ variant }: { variant: 'arrival' | 'home' | 'plain' }) {
   const ref = useRef<HTMLCanvasElement>(null)
+  const motionMode = useSettingsStore(s => s.motionMode)
+  const [systemReduced, setSystemReduced] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  )
+  const reduced = resolveMotionReduction(motionMode, systemReduced)
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => setSystemReduced(media.matches)
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
 
   useEffect(() => {
     const canvas = ref.current
-    if (!canvas) return
+    if (!canvas || reduced || variant === 'plain') return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    let w = 0, h = 0
+    let width = 0
+    let height = 0
     const resize = () => {
-      w = window.innerWidth
-      h = window.innerHeight
-      canvas.width = w * dpr
-      canvas.height = h * dpr
+      width = window.innerWidth
+      height = window.innerHeight
+      canvas.width = Math.round(width * dpr)
+      canvas.height = Math.round(height * dpr)
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     }
     resize()
     window.addEventListener('resize', resize)
 
-    type P = { x: number; y: number; r: number; vy: number; vx: number; a: number; gold: boolean; tw: number }
-    const N = 46
-    const parts: P[] = Array.from({ length: N }, () => ({
-      x: Math.random() * w,
-      y: Math.random() * h,
-      r: 0.6 + Math.random() * 1.9,
-      vy: 0.08 + Math.random() * 0.34,
-      vx: (Math.random() - 0.5) * 0.16,
-      a: 0.08 + Math.random() * 0.4,
-      gold: Math.random() < 0.72,
-      tw: Math.random() * Math.PI * 2,
+    type Rain = { x: number; y: number; length: number; speed: number; opacity: number }
+    type Ember = { x: number; y: number; size: number; speed: number; drift: number; opacity: number; phase: number }
+    const rainCount = variant === 'arrival' ? 52 : 34
+    const rains: Rain[] = Array.from({ length: rainCount }, () => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      length: 10 + Math.random() * 22,
+      speed: 2.3 + Math.random() * 2.8,
+      opacity: 0.04 + Math.random() * 0.11,
+    }))
+    const embers: Ember[] = Array.from({ length: variant === 'home' ? 13 : 5 }, () => ({
+      x: width * (0.64 + Math.random() * 0.3),
+      y: height * (0.2 + Math.random() * 0.68),
+      size: 0.5 + Math.random() * 1.2,
+      speed: 0.05 + Math.random() * 0.13,
+      drift: (Math.random() - 0.5) * 0.08,
+      opacity: 0.06 + Math.random() * 0.18,
+      phase: Math.random() * Math.PI * 2,
     }))
 
     let raf = 0
     const draw = () => {
-      ctx.clearRect(0, 0, w, h)
-      for (const p of parts) {
-        p.y -= p.vy
-        p.x += p.vx
-        p.tw += 0.03
-        if (p.y < -6) { p.y = h + 6; p.x = Math.random() * w }
-        if (p.x < -6) p.x = w + 6
-        else if (p.x > w + 6) p.x = -6
-        const col = p.gold ? '240,201,130' : '101,212,223'
-        const alpha = p.a * (0.6 + 0.4 * Math.sin(p.tw))
+      ctx.clearRect(0, 0, width, height)
+      ctx.lineWidth = 0.7
+      for (const rain of rains) {
+        rain.y += rain.speed
+        rain.x -= rain.speed * 0.18
+        if (rain.y > height + rain.length || rain.x < -rain.length) {
+          rain.y = -rain.length
+          rain.x = Math.random() * width + width * 0.12
+        }
+        ctx.strokeStyle = `rgba(210,218,216,${rain.opacity})`
         ctx.beginPath()
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
-        ctx.fillStyle = `rgba(${col},${alpha})`
-        ctx.shadowBlur = 6
-        ctx.shadowColor = `rgba(${col},${alpha})`
+        ctx.moveTo(rain.x, rain.y)
+        ctx.lineTo(rain.x - rain.length * 0.18, rain.y + rain.length)
+        ctx.stroke()
+      }
+      for (const ember of embers) {
+        ember.y -= ember.speed
+        ember.x += ember.drift
+        ember.phase += 0.018
+        if (ember.y < height * 0.1) ember.y = height * 0.9
+        const alpha = ember.opacity * (0.72 + Math.sin(ember.phase) * 0.28)
+        ctx.fillStyle = `rgba(221,179,107,${alpha})`
+        ctx.beginPath()
+        ctx.arc(ember.x, ember.y, ember.size, 0, Math.PI * 2)
         ctx.fill()
       }
       raf = requestAnimationFrame(draw)
@@ -65,13 +91,9 @@ export function ParticleField() {
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', resize)
+      ctx.clearRect(0, 0, width, height)
     }
-  }, [])
+  }, [reduced, variant])
 
-  return (
-    <canvas
-      ref={ref}
-      style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 0 }}
-    />
-  )
+  return <canvas ref={ref} className="vy-atmosphere" aria-hidden="true" />
 }

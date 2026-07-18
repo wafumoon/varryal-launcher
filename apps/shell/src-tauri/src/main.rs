@@ -309,7 +309,11 @@ async fn bootstrap(app: tauri::AppHandle) -> anyhow::Result<()> {
     // ── Phase: connecting — Wait for IPC handshake ───────────────────────────
     emit_bootstrap(&app, "connecting", "Подключение…", Some(0.8));
 
-    let handshake = ipc_proxy::wait_for_handshake(&app, 30).await?;
+    // Java/JavaFX can take longer than 30s on a cold launch (fresh JAR/JRE,
+    // Windows Defender scan, slow disk). Timing out here leaves the UI able to
+    // reach character auth while the Java backend has not selected an authMethod,
+    // which surfaces as: "This method call not allowed before select authMethod".
+    let handshake = ipc_proxy::wait_for_handshake(&app, 120).await?;
     info!("IPC handshake: port={} pid={}", handshake.port, handshake.pid);
 
     // ── Connect WebSocket and start proxying ─────────────────────────────────
