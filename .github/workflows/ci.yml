@@ -25,6 +25,12 @@ jobs:
       - name: Build bridge module
         working-directory: bridge
         run: gradle build --no-daemon
+      - name: Upload tested bridge runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-runtime
+          path: bridge/build/libs/*.jar
+          if-no-files-found: error
 
   # ── React UI ───────────────────────────────────────────────────────────────
   ui:
@@ -93,6 +99,13 @@ jobs:
         # DENY_WARNINGS ensures #![deny(warnings)] in main.rs is enforced.
         # RUSTFLAGS is set explicitly so CI treats warnings as errors even if
         # the attribute is ever removed from source.
+        env:
+          RUSTFLAGS: "-D warnings"
+
+      - name: cargo test (Windows MSVC)
+        if: matrix.os == 'windows-latest'
+        working-directory: apps/shell/src-tauri
+        run: cargo test --lib
         env:
           RUSTFLAGS: "-D warnings"
 

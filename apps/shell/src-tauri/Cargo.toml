@@ -59,6 +59,13 @@ sha1 = { version = "0.10", features = ["oid"] }
 hex  = "0.4"
 base64 = "0.22"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }
+
 # UUID generation for session tokens
 uuid = { version = "1", features = ["v4"] }
 

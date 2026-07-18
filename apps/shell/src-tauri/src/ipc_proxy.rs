@@ -53,53 +53,188 @@ fn handshake_path(_app: &tauri::AppHandle) -> Result<PathBuf> {
     Ok(crate::paths::varryal_data_dir()?.join("ipc-handshake.json"))
 }
 
-/// Before spawning our own bridge, kill any leftover bridge from a previous run
-/// (the launcher does not yet reap its Java child on exit) and delete the stale
-/// handshake file. Otherwise `wait_for_handshake` and the per-request reads in
-/// `ipc_request` could point at an orphaned JVM: `init()` would populate auth
-/// methods on one bridge while `selectAuthMethod`/`authorize` hit another that
-/// was never initialised — which surfaces as
-/// "This method call not allowed before select authMethod".
-pub fn clear_stale_bridge(app: &tauri::AppHandle) {
-    let path = match handshake_path(app) {
-        Ok(p) => p,
-        Err(_) => return,
-    };
-    if let Ok(raw) = std::fs::read_to_string(&path) {
-        if let Ok(h) = serde_json::from_str::<IpcHandshake>(&raw) {
-            info!("Killing previous bridge pid={}", h.pid);
-            kill_bridge_pid(h.pid);
+/// Before spawning our own bridge, terminate a leftover bridge from a previous run
+/// and delete its stale handshake. A responsive bridge first proves its identity with
+/// the random handshake token and shuts down gracefully. Windows can additionally
+/// reap a hung process through one verified process handle; non-Windows platforms
+/// fail closed rather than killing an unverified or PID-reused process.
+pub async fn clear_stale_bridge(
+    app: &tauri::AppHandle,
+    launcher_jre: &std::path::Path,
+) -> Result<()> {
+    let path = handshake_path(app)?;
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let raw = std::fs::read_to_string(&path)
+        .context("Failed to read stale IPC handshake")?;
+    let handshake: IpcHandshake = serde_json::from_str(&raw)
+        .context("Failed to parse stale IPC handshake")?;
+    info!("Stopping previous bridge pid={}", handshake.pid);
+
+    let graceful = request_bridge_shutdown(&handshake).await;
+    if let Err(error) = &graceful {
+        warn!("Authenticated stale bridge shutdown failed: {error:#}");
+    }
+
+    #[cfg(windows)]
+    kill_bridge_pid(handshake.pid, launcher_jre)?;
+
+    #[cfg(not(windows))]
+    {
+        let _ = launcher_jre;
+        if graceful.is_ok() {
+            wait_for_process_exit(handshake.pid, Duration::from_secs(5)).await?;
+        } else if process_is_running(handshake.pid)? {
+            return Err(graceful.unwrap_err())
+                .context("Refusing to terminate an unauthenticated stale process");
         }
     }
-    let _ = std::fs::remove_file(&path);
+
+    std::fs::remove_file(&path)
+        .context("Failed to remove stale IPC handshake")?;
+    Ok(())
+}
+
+async fn request_bridge_shutdown(handshake: &IpcHandshake) -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let ws_url = format!("ws://127.0.0.1:{}", handshake.port);
+        let (ws_stream, _) = connect_async(&ws_url).await
+            .context("Cannot connect to stale Java bridge")?;
+        let (mut write, mut read) = ws_stream.split();
+        let id = uuid::Uuid::new_v4().to_string();
+        let request = serde_json::json!({
+            "id": id,
+            "type": "request",
+            "method": "shutdown",
+            "token": handshake.token,
+            "params": {},
+        });
+        write.send(Message::Text(request.to_string())).await
+            .context("Failed to send stale bridge shutdown")?;
+
+        while let Some(message) = read.next().await {
+            match message.context("Failed to read stale bridge shutdown response")? {
+                Message::Text(text) => {
+                    let response: serde_json::Value = serde_json::from_str(&text)
+                        .context("Stale bridge returned malformed JSON")?;
+                    if response.get("type").and_then(|value| value.as_str()) == Some("response")
+                        && response.get("id").and_then(|value| value.as_str()) == Some(&id)
+                    {
+                        if response.get("ok").and_then(|value| value.as_bool()) == Some(true) {
+                            return Ok(());
+                        }
+                        anyhow::bail!("Stale bridge rejected authenticated shutdown");
+                    }
+                }
+                Message::Close(_) => break,
+                _ => {}
+            }
+        }
+        anyhow::bail!("Stale bridge closed without acknowledging shutdown")
+    })
+    .await
+    .context("Timed out stopping stale Java bridge")?
+}
+
+#[cfg(any(windows, test))]
+fn is_expected_bridge_executable(actual: &std::path::Path, launcher_jre: &std::path::Path) -> bool {
+    let file_name = actual.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+    if !file_name.eq_ignore_ascii_case("java.exe") && !file_name.eq_ignore_ascii_case("javaw.exe") {
+        return false;
+    }
+    let expected_bin = launcher_jre.join("bin");
+    let actual_parent = actual.parent().unwrap_or_else(|| std::path::Path::new(""));
+    actual_parent.to_string_lossy().replace('\\', "/")
+        .eq_ignore_ascii_case(&expected_bin.to_string_lossy().replace('\\', "/"))
 }
 
 #[cfg(windows)]
-fn kill_bridge_pid(pid: u64) {
-    use std::os::windows::process::CommandExt;
-    // IMAGENAME filter guards against PID reuse — only kill if it is still javaw.
-    let _ = std::process::Command::new("taskkill")
-        .args([
-            "/F",
-            "/FI",
-            &format!("PID eq {pid}"),
-            "/FI",
-            "IMAGENAME eq javaw.exe",
-        ])
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-        .output();
+fn kill_bridge_pid(pid: u64, launcher_jre: &std::path::Path) -> Result<()> {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+    };
+    const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
+
+    struct OwnedHandle(windows_sys::Win32::Foundation::HANDLE);
+    impl Drop for OwnedHandle {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.0); }
+        }
+    }
+
+    let pid = u32::try_from(pid).context("Bridge PID is outside the Windows PID range")?;
+    let handle = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZE_ACCESS,
+            0,
+            pid,
+        )
+    };
+    if handle.is_null() {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(87) {
+            return Ok(());
+        }
+        return Err(error).context("Unable to open stale bridge process");
+    }
+    let handle = OwnedHandle(handle);
+
+    let mut buffer = vec![0_u16; 32_768];
+    let mut length = buffer.len() as u32;
+    let queried = unsafe {
+        QueryFullProcessImageNameW(handle.0, 0, buffer.as_mut_ptr(), &mut length)
+    };
+    if queried == 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("Unable to identify stale bridge executable");
+    }
+    let actual = PathBuf::from(String::from_utf16_lossy(&buffer[..length as usize]));
+    let actual = std::fs::canonicalize(&actual)
+        .context("Unable to canonicalize stale bridge executable")?;
+    let expected_jre = std::fs::canonicalize(launcher_jre)
+        .context("Unable to canonicalize launcher JRE")?;
+    if !is_expected_bridge_executable(&actual, &expected_jre) {
+        anyhow::bail!(
+            "Refusing to terminate pid={pid}: {} is outside launcher JRE {}",
+            actual.display(),
+            expected_jre.display()
+        );
+    }
+
+    if unsafe { TerminateProcess(handle.0, 0) } == 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("Failed to terminate stale bridge process");
+    }
+    if unsafe { WaitForSingleObject(handle.0, 5_000) } != WAIT_OBJECT_0 {
+        anyhow::bail!("Timed out waiting for stale bridge pid={pid} to exit");
+    }
+    Ok(())
 }
 
 #[cfg(not(windows))]
-fn kill_bridge_pid(pid: u64) {
-    // Verify the pid is a java process before killing (guards against PID reuse).
-    let is_java = std::process::Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "comm="])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("java"))
-        .unwrap_or(false);
-    if is_java {
-        let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).output();
+fn process_is_running(pid: u64) -> Result<bool> {
+    let status = std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .context("Failed to probe stale bridge process")?;
+    Ok(status.success())
+}
+
+#[cfg(not(windows))]
+async fn wait_for_process_exit(pid: u64, timeout: Duration) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if !process_is_running(pid)? {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!("Timed out waiting for authenticated stale bridge pid={pid} to exit");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -237,4 +372,64 @@ fn read_handshake_cached(app: &tauri::AppHandle) -> Result<IpcHandshake> {
     let raw = std::fs::read_to_string(&path)
         .context("ipc-handshake.json not found — Java bridge not running?")?;
     serde_json::from_str(&raw).context("Failed to parse ipc-handshake.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_expected_bridge_executable, request_bridge_shutdown, IpcHandshake};
+    use futures_util::{SinkExt, StreamExt};
+    use std::path::Path;
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::{accept_async, tungstenite::Message};
+
+    #[test]
+    fn stale_bridge_cleanup_requires_the_provisioned_jre_executable() {
+        let jre = Path::new("C:/Users/test/AppData/Roaming/Varryal/jre/java-25/jre-25.0.3");
+        assert!(is_expected_bridge_executable(
+            Path::new("C:/Users/test/AppData/Roaming/Varryal/jre/java-25/jre-25.0.3/bin/java.exe"),
+            jre,
+        ));
+        assert!(is_expected_bridge_executable(
+            Path::new("C:/Users/test/AppData/Roaming/Varryal/jre/java-25/jre-25.0.3/bin/javaw.exe"),
+            jre,
+        ));
+        assert!(!is_expected_bridge_executable(Path::new("C:/Program Files/Java/bin/java.exe"), jre));
+        assert!(!is_expected_bridge_executable(
+            Path::new("C:/Users/test/AppData/Roaming/Varryal/jre/java-25/jre-25.0.3/java.exe"),
+            jre,
+        ));
+    }
+
+    #[tokio::test]
+    async fn stale_bridge_shutdown_requires_token_and_matching_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = accept_async(stream).await.unwrap();
+            let request = match socket.next().await.unwrap().unwrap() {
+                Message::Text(text) => serde_json::from_str::<serde_json::Value>(&text).unwrap(),
+                other => panic!("unexpected message: {other:?}"),
+            };
+            assert_eq!(request["method"], "shutdown");
+            assert_eq!(request["token"], "test-secret");
+            let response = serde_json::json!({
+                "id": request["id"],
+                "type": "response",
+                "ok": true,
+                "result": {},
+            });
+            socket.send(Message::Text(response.to_string())).await.unwrap();
+        });
+
+        request_bridge_shutdown(&IpcHandshake {
+            port,
+            token: "test-secret".to_string(),
+            pid: 42,
+            protocol_version: 1,
+        })
+        .await
+        .unwrap();
+        server.await.unwrap();
+    }
 }
