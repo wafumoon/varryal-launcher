@@ -89,11 +89,15 @@ Protocol version: **1**
 
 | name | data |
 |---|---|
-| `onStartPhase` | `{ phase: "JAVA" \| "ASSETS" \| "CLIENT" \| "LAUNCH" }` |
-| `onStage` | `{ stage: "assetVerify" \| "hashing" \| "diff" \| "download" \| "deleteExtra" \| "done.part" \| "done" }` |
-| `onTotalDownload` | `{ bytes: number }` |
-| `onCurrentDownloaded` | `{ bytes: number }` |
-| `onCanCancel` | `{}` |
+| `onStartPhase` | `{ readyProfileId: string, phase: "JAVA" \| "ASSETS" \| "CLIENT" \| "LAUNCH" }` |
+| `onStage` | `{ readyProfileId: string, stage: "assetVerify" \| "hashing" \| "diff" \| "download" \| "deleteExtra" \| "done.part" \| "done" }` |
+| `onTotalDownload` | `{ readyProfileId: string, bytes: number }` |
+| `onCurrentDownloaded` | `{ readyProfileId: string, bytes: number }` |
+| `onCanCancel` | `{ readyProfileId: string }` |
+| `onComplete` | `{ readyProfileId: string }` |
+| `onError` | `{ readyProfileId: string, error: string }` |
+
+Every download event carries the bridge-generated `readyProfileId`; clients must ignore events that do not match the active attempt.
 
 ---
 
@@ -101,12 +105,15 @@ Protocol version: **1**
 
 | name | data |
 |---|---|
-| `onStarted` | `{}` |
-| `onCanTerminate` | `{}` |
-| `onNormalOutput` | `{ base64: string }` (UTF-8 bytes base64-encoded) |
-| `onErrorOutput` | `{ base64: string }` |
-| `onFinished` | `{ code: number }` |
-| `onReadyToExit` | `{}` |
+| `onStarted` | `{ readyProfileId: string }` |
+| `onCanTerminate` | `{ readyProfileId: string }` |
+| `onNormalOutput` | `{ readyProfileId: string, base64: string }` (UTF-8 bytes base64-encoded) |
+| `onErrorOutput` | `{ readyProfileId: string, base64: string }` |
+| `onFinished` | `{ readyProfileId: string, code: number }` |
+| `onReadyToExit` | `{ readyProfileId: string }` |
+| `onError` | `{ readyProfileId: string, error: string }` |
+
+Every run event carries `readyProfileId`; clients must correlate it with the active run before mutating UI or window state.
 
 ---
 
