@@ -13,6 +13,7 @@
   "include": [
     "src/utils/launcherState.ts",
     "src/utils/serialQueue.ts",
+    "src/utils/version.ts",
     "src/store/settings.ts"
   ]
 }
