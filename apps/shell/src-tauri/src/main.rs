@@ -18,6 +18,7 @@
 
 mod auth;
 mod config;
+mod dns_policy;
 mod jre;
 mod paths;
 mod portal;

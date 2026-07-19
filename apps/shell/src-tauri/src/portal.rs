@@ -8,10 +8,16 @@
 //!   GET  /launcher/me/characters          → { items: [Character] }
 //!   POST /launcher/me/characters/{id}/session → { minecraftAccessToken, uuid, username, ... }
 
+use crate::dns_policy::{
+    cache_is_fresh, fallback_sources, preferred_source, should_use_portal_resolver,
+    ResolutionSource, TransportFailure,
+};
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use serde::Deserialize;
 use serde_json::Value;
 use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::command;
 use tracing::{info, warn};
 
@@ -24,7 +30,12 @@ struct DohEndpoint {
     url: &'static str,
 }
 
-const DOH_ENDPOINTS: [DohEndpoint; 2] = [
+const SYSTEM_DNS_TIMEOUT: Duration = Duration::from_secs(2);
+const DOH_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+const DOH_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const DOH_CACHE_TTL: Duration = Duration::from_secs(300);
+
+static DOH_ENDPOINTS: [DohEndpoint; 2] = [
     DohEndpoint {
         host: "cloudflare-dns.com",
         socket_addr: "1.1.1.1:443",
@@ -37,6 +48,20 @@ const DOH_ENDPOINTS: [DohEndpoint; 2] = [
     },
 ];
 
+#[derive(Clone)]
+struct CachedDohAddresses {
+    expires_at: Instant,
+    addresses: Vec<SocketAddr>,
+}
+
+static DOH_CACHE: OnceLock<Mutex<Option<CachedDohAddresses>>> = OnceLock::new();
+
+#[derive(Debug)]
+struct PortalResolution {
+    source: ResolutionSource,
+    addresses: Vec<SocketAddr>,
+}
+
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
 /// List characters for the authenticated account.
@@ -48,13 +73,12 @@ pub async fn portal_list_characters(account_token: String) -> Result<Value, Stri
     let url = format!("{PORTAL_API_BASE}/launcher/me/characters");
     info!("portal_list_characters: GET {url}");
 
-    let client = build_client().await?;
-    let response = client
+    let request = reqwest::Client::new()
         .get(&url)
         .header("Authorization", format!("Bearer {account_token}"))
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {e}"))?;
+        .build()
+        .map_err(|e| format!("Failed to build request: {e}"))?;
+    let response = execute_portal_request(request).await?;
 
     let status = response.status();
     if !status.is_success() {
@@ -83,17 +107,16 @@ pub async fn portal_create_session(
     let url = format!("{PORTAL_API_BASE}/launcher/me/characters/{character_id}/session");
     info!("portal_create_session: POST {url}");
 
-    let client = build_client().await?;
-    let response = client
+    let request = reqwest::Client::new()
         .post(&url)
         .header("Authorization", format!("Bearer {account_token}"))
         // The endpoint needs a Content-Type even with an empty body so some
         // server-side frameworks don't reject the request.
         .header("Content-Type", "application/json")
         .body("{}")
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {e}"))?;
+        .build()
+        .map_err(|e| format!("Failed to build request: {e}"))?;
+    let response = execute_portal_request(request).await?;
 
     let status = response.status();
     if !status.is_success() {
@@ -123,13 +146,12 @@ pub async fn portal_login(email: String, password: String) -> Result<Value, Stri
     let url = format!("{PORTAL_API_BASE}/launcher/auth/login");
     info!("portal_login: POST {url}");
 
-    let client = build_client().await?;
-    let response = client
+    let request = reqwest::Client::new()
         .post(&url)
         .json(&serde_json::json!({ "email": email, "password": password }))
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {e}"))?;
+        .build()
+        .map_err(|e| format!("Failed to build request: {e}"))?;
+    let response = execute_portal_request(request).await?;
 
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
@@ -161,12 +183,11 @@ pub async fn portal_login(email: String, password: String) -> Result<Value, Stri
 pub async fn portal_fetch_skin(url: String) -> Result<String, String> {
     use base64::Engine as _;
     info!("portal_fetch_skin: GET {url}");
-    let client = build_client().await?;
-    let response = client
+    let request = reqwest::Client::new()
         .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {e}"))?;
+        .build()
+        .map_err(|e| format!("Failed to build request: {e}"))?;
+    let response = execute_portal_request(request).await?;
     let status = response.status();
     if !status.is_success() {
         return Err(format!("HTTP {status}"));
@@ -224,71 +245,231 @@ fn parse_doh_addresses(body: &str) -> Result<Vec<IpAddr>, String> {
     Ok(addresses)
 }
 
-async fn resolve_portal_addresses() -> Result<Vec<IpAddr>, String> {
-    let mut errors = Vec::new();
+fn doh_cache() -> &'static Mutex<Option<CachedDohAddresses>> {
+    DOH_CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn cached_doh_addresses() -> Option<Vec<SocketAddr>> {
+    let mut cache = doh_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(cached) = cache.as_ref() else {
+        return None;
+    };
+    if !cache_is_fresh(cached.expires_at, Instant::now()) {
+        *cache = None;
+        return None;
+    }
+    Some(cached.addresses.clone())
+}
+
+fn remember_doh_addresses(addresses: &[SocketAddr]) {
+    let mut cache = doh_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *cache = Some(CachedDohAddresses {
+        expires_at: Instant::now() + DOH_CACHE_TTL,
+        addresses: addresses.to_vec(),
+    });
+}
+
+fn invalidate_doh_cache() {
+    let mut cache = doh_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *cache = None;
+}
+
+async fn resolve_system_addresses() -> Result<Vec<SocketAddr>, String> {
+    let lookup = tokio::net::lookup_host((PORTAL_HOST, 443));
+    let resolved = tokio::time::timeout(SYSTEM_DNS_TIMEOUT, lookup)
+        .await
+        .map_err(|_| {
+            format!(
+                "system DNS timed out after {} ms",
+                SYSTEM_DNS_TIMEOUT.as_millis()
+            )
+        })?
+        .map_err(|error| format!("system DNS failed: {error}"))?;
+
+    let mut addresses: Vec<SocketAddr> = resolved.collect();
+    addresses.sort_unstable();
+    addresses.dedup();
+    if addresses.is_empty() {
+        return Err("system DNS returned no addresses".to_string());
+    }
+    Ok(addresses)
+}
+
+async fn query_doh_endpoint(endpoint: &'static DohEndpoint) -> Result<Vec<SocketAddr>, String> {
+    let socket_addr = endpoint
+        .socket_addr
+        .parse::<SocketAddr>()
+        .map_err(|error| format!("invalid endpoint address: {error}"))?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(DOH_CONNECT_TIMEOUT)
+        .timeout(DOH_REQUEST_TIMEOUT)
+        .resolve(endpoint.host, socket_addr)
+        .build()
+        .map_err(|error| format!("client build failed: {error}"))?;
+    let response = client
+        .get(endpoint.url)
+        .header(reqwest::header::ACCEPT, "application/dns-json")
+        .send()
+        .await
+        .map_err(|error| format!("request failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| format!("response read failed: {error}"))?;
+    if body.len() > 64 * 1024 {
+        return Err("response exceeded 64 KiB".to_string());
+    }
+    let body =
+        std::str::from_utf8(&body).map_err(|error| format!("response was not UTF-8: {error}"))?;
+    let mut addresses: Vec<SocketAddr> = parse_doh_addresses(body)?
+        .into_iter()
+        .map(|address| SocketAddr::new(address, 443))
+        .collect();
+    addresses.sort_unstable();
+    addresses.dedup();
+    Ok(addresses)
+}
+
+async fn resolve_fresh_doh_addresses() -> Result<Vec<SocketAddr>, String> {
+    let mut pending = FuturesUnordered::new();
     for endpoint in &DOH_ENDPOINTS {
-        let socket_addr = endpoint
-            .socket_addr
-            .parse::<SocketAddr>()
-            .map_err(|error| format!("Invalid DoH endpoint address: {error}"))?;
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(10))
-            .resolve(endpoint.host, socket_addr)
-            .build()
-            .map_err(|error| format!("Failed to build DoH client: {error}"))?;
+        pending.push(async move { (endpoint.host, query_doh_endpoint(endpoint).await) });
+    }
 
-        let result = async {
-            let response = client
-                .get(endpoint.url)
-                .header(reqwest::header::ACCEPT, "application/dns-json")
-                .send()
-                .await
-                .map_err(|error| format!("request failed: {error}"))?;
-            if !response.status().is_success() {
-                return Err(format!("HTTP {}", response.status()));
-            }
-            let body = response
-                .text()
-                .await
-                .map_err(|error| format!("response read failed: {error}"))?;
-            parse_doh_addresses(&body)
-        }
-        .await;
-
+    let mut errors = Vec::new();
+    while let Some((host, result)) = pending.next().await {
         match result {
-            Ok(addresses) => return Ok(addresses),
-            Err(error) => errors.push(format!("{}: {error}", endpoint.host)),
+            Ok(addresses) => {
+                info!(
+                    "Portal DNS resolved over HTTPS via {host} ({} address(es))",
+                    addresses.len()
+                );
+                remember_doh_addresses(&addresses);
+                return Ok(addresses);
+            }
+            Err(error) => errors.push(format!("{host}: {error}")),
         }
     }
     Err(errors.join("; "))
 }
 
-async fn build_client() -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30));
-
-    match resolve_portal_addresses().await {
-        Ok(addresses) => {
-            let socket_addrs: Vec<SocketAddr> = addresses
-                .into_iter()
-                .map(|address| SocketAddr::new(address, 443))
-                .collect();
-            info!(
-                "Portal DNS resolved over HTTPS ({} address(es))",
-                socket_addrs.len()
-            );
-            builder = builder.resolve_to_addrs(PORTAL_HOST, &socket_addrs);
+async fn resolution_for_source(source: ResolutionSource) -> Result<PortalResolution, String> {
+    let addresses = match source {
+        ResolutionSource::System => resolve_system_addresses().await?,
+        ResolutionSource::DohCached => {
+            cached_doh_addresses().ok_or_else(|| "cached DoH addresses expired".to_string())?
         }
-        Err(error) => {
-            warn!("Portal DoH resolution failed; falling back to system DNS: {error}");
+        ResolutionSource::DohFresh => resolve_fresh_doh_addresses().await?,
+    };
+    Ok(PortalResolution { source, addresses })
+}
+
+async fn primary_portal_resolution() -> Result<PortalResolution, String> {
+    if cached_doh_addresses().is_some() {
+        return resolution_for_source(preferred_source(true, false)).await;
+    }
+
+    match resolve_system_addresses().await {
+        Ok(addresses) => Ok(PortalResolution {
+            source: preferred_source(false, true),
+            addresses,
+        }),
+        Err(system_error) => {
+            warn!("Portal system DNS unavailable; trying DNS-over-HTTPS: {system_error}");
+            resolution_for_source(preferred_source(false, false))
+                .await
+                .map_err(|doh_error| format!("{system_error}; DNS-over-HTTPS failed: {doh_error}"))
+        }
+    }
+}
+
+fn build_client_for_resolution(resolution: &PortalResolution) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .resolve_to_addrs(PORTAL_HOST, &resolution.addresses)
+        .build()
+        .map_err(|error| format!("Failed to build HTTP client: {error}"))
+}
+
+async fn execute_portal_request(request: reqwest::Request) -> Result<reqwest::Response, String> {
+    if !should_use_portal_resolver(request.url().host_str(), PORTAL_HOST) {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|error| format!("Failed to build HTTP client: {error}"))?;
+        return client
+            .execute(request)
+            .await
+            .map_err(|error| format!("Request failed: {error}"));
+    }
+
+    let retry_template = request
+        .try_clone()
+        .ok_or_else(|| "Portal request body cannot be retried safely".to_string())?;
+    let primary = primary_portal_resolution()
+        .await
+        .map_err(|error| format!("Request failed: {error}"))?;
+    info!("Portal request DNS source: {:?}", primary.source);
+    let primary_client = build_client_for_resolution(&primary)?;
+
+    let first_error = match primary_client.execute(request).await {
+        Ok(response) => return Ok(response),
+        Err(error) => error,
+    };
+    let failure = if first_error.is_connect() {
+        TransportFailure::Connect
+    } else {
+        TransportFailure::Other
+    };
+    let fallbacks = fallback_sources(primary.source, failure);
+    if fallbacks.iter().all(Option::is_none) {
+        return Err(format!("Request failed: {first_error}"));
+    }
+
+    if primary.source == ResolutionSource::DohCached {
+        invalidate_doh_cache();
+    }
+    let mut errors = vec![format!("{:?}: {first_error}", primary.source)];
+    for source in fallbacks.into_iter().flatten() {
+        let resolution = match resolution_for_source(source).await {
+            Ok(resolution) => resolution,
+            Err(error) => {
+                errors.push(format!("{source:?} resolution: {error}"));
+                continue;
+            }
+        };
+        warn!(
+            "Portal connect failed via {:?}; retrying via {:?}",
+            primary.source, resolution.source
+        );
+        let client = build_client_for_resolution(&resolution)?;
+        let retry = retry_template
+            .try_clone()
+            .ok_or_else(|| "Portal request body cannot be retried safely".to_string())?;
+        match client.execute(retry).await {
+            Ok(response) => return Ok(response),
+            Err(error) if error.is_connect() => {
+                errors.push(format!("{:?}: {error}", resolution.source));
+            }
+            Err(error) => return Err(format!("Request failed: {error}")),
         }
     }
 
-    builder
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {e}"))
+    Err(format!(
+        "Request failed after DNS resolver fallback: {}",
+        errors.join("; ")
+    ))
 }
 
 #[cfg(test)]
