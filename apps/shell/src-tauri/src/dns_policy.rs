@@ -11,6 +11,37 @@ pub(crate) enum TransportFailure {
     Other,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CacheVersion {
+    pub(crate) generation: u64,
+    pub(crate) refresh: u64,
+}
+
+impl CacheVersion {
+    pub(crate) const fn new(generation: u64, refresh: u64) -> Self {
+        Self {
+            generation,
+            refresh,
+        }
+    }
+}
+
+pub(crate) fn should_commit_cache_refresh(
+    current_generation: u64,
+    current_entry: Option<CacheVersion>,
+    candidate: CacheVersion,
+) -> bool {
+    candidate.generation == current_generation
+        && current_entry.map_or(true, |current| candidate.refresh > current.refresh)
+}
+
+pub(crate) fn should_invalidate_cache(
+    current_entry: Option<CacheVersion>,
+    used_entry: CacheVersion,
+) -> bool {
+    current_entry == Some(used_entry)
+}
+
 pub(crate) fn cache_is_fresh(expires_at: std::time::Instant, now: std::time::Instant) -> bool {
     expires_at > now
 }
@@ -50,8 +81,9 @@ pub(crate) fn fallback_sources(
 #[cfg(test)]
 mod tests {
     use super::{
-        cache_is_fresh, fallback_sources, preferred_source, should_use_portal_resolver,
-        ResolutionSource, TransportFailure,
+        cache_is_fresh, fallback_sources, preferred_source, should_commit_cache_refresh,
+        should_invalidate_cache, should_use_portal_resolver, CacheVersion, ResolutionSource,
+        TransportFailure,
     };
     use std::time::{Duration, Instant};
 
@@ -61,6 +93,29 @@ mod tests {
         assert!(cache_is_fresh(now + Duration::from_secs(1), now));
         assert!(!cache_is_fresh(now, now));
         assert!(!cache_is_fresh(now - Duration::from_secs(1), now));
+    }
+
+    #[test]
+    fn stale_refresh_cannot_overwrite_a_newer_cache_generation_or_entry() {
+        let old = CacheVersion::new(7, 1);
+        let newer = CacheVersion::new(7, 2);
+        let next_generation = CacheVersion::new(8, 1);
+
+        assert!(should_commit_cache_refresh(7, None, old));
+        assert!(should_commit_cache_refresh(7, Some(old), newer));
+        assert!(!should_commit_cache_refresh(7, Some(newer), old));
+        assert!(!should_commit_cache_refresh(8, None, old));
+        assert!(should_commit_cache_refresh(8, None, next_generation));
+    }
+
+    #[test]
+    fn connect_failure_invalidates_only_the_exact_cached_snapshot_it_used() {
+        let used = CacheVersion::new(4, 9);
+        let replacement = CacheVersion::new(4, 10);
+
+        assert!(should_invalidate_cache(Some(used), used));
+        assert!(!should_invalidate_cache(Some(replacement), used));
+        assert!(!should_invalidate_cache(None, used));
     }
 
     #[test]

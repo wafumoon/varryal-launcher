@@ -9,8 +9,9 @@
 //!   POST /launcher/me/characters/{id}/session → { minecraftAccessToken, uuid, username, ... }
 
 use crate::dns_policy::{
-    cache_is_fresh, fallback_sources, preferred_source, should_use_portal_resolver,
-    ResolutionSource, TransportFailure,
+    cache_is_fresh, fallback_sources, preferred_source, should_commit_cache_refresh,
+    should_invalidate_cache, should_use_portal_resolver, CacheVersion, ResolutionSource,
+    TransportFailure,
 };
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use serde::Deserialize;
@@ -50,16 +51,25 @@ static DOH_ENDPOINTS: [DohEndpoint; 2] = [
 
 #[derive(Clone)]
 struct CachedDohAddresses {
+    version: CacheVersion,
     expires_at: Instant,
     addresses: Vec<SocketAddr>,
 }
 
-static DOH_CACHE: OnceLock<Mutex<Option<CachedDohAddresses>>> = OnceLock::new();
+#[derive(Default)]
+struct DohCacheState {
+    generation: u64,
+    next_refresh: u64,
+    entry: Option<CachedDohAddresses>,
+}
+
+static DOH_CACHE: OnceLock<Mutex<DohCacheState>> = OnceLock::new();
 
 #[derive(Debug)]
 struct PortalResolution {
     source: ResolutionSource,
     addresses: Vec<SocketAddr>,
+    cache_version: Option<CacheVersion>,
 }
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
@@ -245,39 +255,63 @@ fn parse_doh_addresses(body: &str) -> Result<Vec<IpAddr>, String> {
     Ok(addresses)
 }
 
-fn doh_cache() -> &'static Mutex<Option<CachedDohAddresses>> {
-    DOH_CACHE.get_or_init(|| Mutex::new(None))
+fn bump_counter(counter: &mut u64) {
+    *counter = counter.wrapping_add(1);
+    if *counter == 0 {
+        *counter = 1;
+    }
 }
 
-fn cached_doh_addresses() -> Option<Vec<SocketAddr>> {
+fn doh_cache() -> &'static Mutex<DohCacheState> {
+    DOH_CACHE.get_or_init(|| Mutex::new(DohCacheState::default()))
+}
+
+fn cached_doh_snapshot() -> Option<CachedDohAddresses> {
     let mut cache = doh_cache()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let Some(cached) = cache.as_ref() else {
-        return None;
-    };
-    if !cache_is_fresh(cached.expires_at, Instant::now()) {
-        *cache = None;
+    let expired = cache.entry.as_ref().map_or(false, |entry| {
+        !cache_is_fresh(entry.expires_at, Instant::now())
+    });
+    if expired {
+        cache.entry = None;
+        bump_counter(&mut cache.generation);
         return None;
     }
-    Some(cached.addresses.clone())
+    cache.entry.clone()
 }
 
-fn remember_doh_addresses(addresses: &[SocketAddr]) {
+fn begin_doh_refresh() -> CacheVersion {
     let mut cache = doh_cache()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *cache = Some(CachedDohAddresses {
-        expires_at: Instant::now() + DOH_CACHE_TTL,
-        addresses: addresses.to_vec(),
-    });
+    bump_counter(&mut cache.next_refresh);
+    CacheVersion::new(cache.generation, cache.next_refresh)
 }
 
-fn invalidate_doh_cache() {
+fn remember_doh_addresses(addresses: &[SocketAddr], version: CacheVersion) {
     let mut cache = doh_cache()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *cache = None;
+    let current_version = cache.entry.as_ref().map(|entry| entry.version);
+    if should_commit_cache_refresh(cache.generation, current_version, version) {
+        cache.entry = Some(CachedDohAddresses {
+            version,
+            expires_at: Instant::now() + DOH_CACHE_TTL,
+            addresses: addresses.to_vec(),
+        });
+    }
+}
+
+fn invalidate_doh_cache(version: CacheVersion) {
+    let mut cache = doh_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let current_version = cache.entry.as_ref().map(|entry| entry.version);
+    if should_invalidate_cache(current_version, version) {
+        cache.entry = None;
+        bump_counter(&mut cache.generation);
+    }
 }
 
 async fn resolve_system_addresses() -> Result<Vec<SocketAddr>, String> {
@@ -339,7 +373,8 @@ async fn query_doh_endpoint(endpoint: &'static DohEndpoint) -> Result<Vec<Socket
     Ok(addresses)
 }
 
-async fn resolve_fresh_doh_addresses() -> Result<Vec<SocketAddr>, String> {
+async fn resolve_fresh_doh_addresses() -> Result<(Vec<SocketAddr>, CacheVersion), String> {
+    let refresh = begin_doh_refresh();
     let mut pending = FuturesUnordered::new();
     for endpoint in &DOH_ENDPOINTS {
         pending.push(async move { (endpoint.host, query_doh_endpoint(endpoint).await) });
@@ -353,8 +388,8 @@ async fn resolve_fresh_doh_addresses() -> Result<Vec<SocketAddr>, String> {
                     "Portal DNS resolved over HTTPS via {host} ({} address(es))",
                     addresses.len()
                 );
-                remember_doh_addresses(&addresses);
-                return Ok(addresses);
+                remember_doh_addresses(&addresses, refresh);
+                return Ok((addresses, refresh));
             }
             Err(error) => errors.push(format!("{host}: {error}")),
         }
@@ -363,25 +398,46 @@ async fn resolve_fresh_doh_addresses() -> Result<Vec<SocketAddr>, String> {
 }
 
 async fn resolution_for_source(source: ResolutionSource) -> Result<PortalResolution, String> {
-    let addresses = match source {
-        ResolutionSource::System => resolve_system_addresses().await?,
+    match source {
+        ResolutionSource::System => Ok(PortalResolution {
+            source,
+            addresses: resolve_system_addresses().await?,
+            cache_version: None,
+        }),
         ResolutionSource::DohCached => {
-            cached_doh_addresses().ok_or_else(|| "cached DoH addresses expired".to_string())?
+            let snapshot =
+                cached_doh_snapshot().ok_or_else(|| "cached DoH addresses expired".to_string())?;
+            Ok(PortalResolution {
+                source,
+                addresses: snapshot.addresses,
+                cache_version: Some(snapshot.version),
+            })
         }
-        ResolutionSource::DohFresh => resolve_fresh_doh_addresses().await?,
-    };
-    Ok(PortalResolution { source, addresses })
+        ResolutionSource::DohFresh => {
+            let (addresses, version) = resolve_fresh_doh_addresses().await?;
+            Ok(PortalResolution {
+                source,
+                addresses,
+                cache_version: Some(version),
+            })
+        }
+    }
 }
 
 async fn primary_portal_resolution() -> Result<PortalResolution, String> {
-    if cached_doh_addresses().is_some() {
-        return resolution_for_source(preferred_source(true, false)).await;
+    if let Some(snapshot) = cached_doh_snapshot() {
+        return Ok(PortalResolution {
+            source: preferred_source(true, false),
+            addresses: snapshot.addresses,
+            cache_version: Some(snapshot.version),
+        });
     }
 
     match resolve_system_addresses().await {
         Ok(addresses) => Ok(PortalResolution {
             source: preferred_source(false, true),
             addresses,
+            cache_version: None,
         }),
         Err(system_error) => {
             warn!("Portal system DNS unavailable; trying DNS-over-HTTPS: {system_error}");
@@ -437,8 +493,8 @@ async fn execute_portal_request(request: reqwest::Request) -> Result<reqwest::Re
         return Err(format!("Request failed: {first_error}"));
     }
 
-    if primary.source == ResolutionSource::DohCached {
-        invalidate_doh_cache();
+    if let Some(version) = primary.cache_version {
+        invalidate_doh_cache(version);
     }
     let mut errors = vec![format!("{:?}: {first_error}", primary.source)];
     for source in fallbacks.into_iter().flatten() {
@@ -460,6 +516,9 @@ async fn execute_portal_request(request: reqwest::Request) -> Result<reqwest::Re
         match client.execute(retry).await {
             Ok(response) => return Ok(response),
             Err(error) if error.is_connect() => {
+                if let Some(version) = resolution.cache_version {
+                    invalidate_doh_cache(version);
+                }
                 errors.push(format!("{:?}: {error}", resolution.source));
             }
             Err(error) => return Err(format!("Request failed: {error}")),
