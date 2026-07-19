@@ -1,6 +1,6 @@
 [package]
 name = "varryal-shell"
-version = "1.0.0"
+version = "1.0.10"
 description = "Varryal Launcher — Tauri shell"
 authors = ["Varryal Project Contributors"]
 license = "GPL-3.0"
