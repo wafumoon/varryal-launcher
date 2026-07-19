@@ -4,6 +4,7 @@
 
 pub mod auth;
 pub mod config;
+mod dns_policy;
 pub mod jre;
 pub mod paths;
 pub mod portal;

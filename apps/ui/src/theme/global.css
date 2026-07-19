@@ -93,6 +93,7 @@ a:hover { color: var(--primary-hover); }
 /* Native title bar */
 .vy-titlebar { height: 38px; flex: 0 0 38px; display: flex; align-items: center; padding-left: 13px; background: rgba(7, 9, 10, 0.88); border-bottom: 1px solid rgba(215, 191, 149, 0.11); user-select: none; -webkit-user-select: none; }
 .vy-titlebar__brand { display: flex; align-items: center; gap: 8px; color: var(--text-lo); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; pointer-events: none; }
+.vy-titlebar__version { margin-left: 1px; padding-left: 9px; border-left: 1px solid rgba(215,191,149,0.18); color: rgba(215,191,149,0.62); font-size: 9px; font-weight: 500; letter-spacing: 0.06em; text-transform: none; font-variant-numeric: tabular-nums; }
 .vy-titlebar__mark { width: 6px; height: 6px; transform: rotate(45deg); background: var(--primary); box-shadow: 0 0 10px rgba(221,179,107,0.6); }
 .vy-titlebar__controls { margin-left: auto; height: 100%; display: flex; }
 .vy-window-button { width: 44px; height: 100%; display: grid; place-items: center; background: transparent; color: var(--text-lo); transition: background .15s ease, color .15s ease; }

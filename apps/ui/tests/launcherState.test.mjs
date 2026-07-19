@@ -13,6 +13,7 @@ import {
   resolveOptionalRevisionOnProfileLoad,
 } from '../.test-dist/utils/launcherState.js'
 import { createSerialQueue } from '../.test-dist/utils/serialQueue.js'
+import { formatLauncherVersion } from '../.test-dist/utils/version.js'
 
 const storageData = new Map()
 Object.defineProperty(globalThis, 'localStorage', {
@@ -33,6 +34,12 @@ test('classifyRemoteError separates expired auth, credentials, network, and unkn
   assert.equal(classifyRemoteError('Неверная почта или пароль'), 'credentials')
   assert.equal(classifyRemoteError('Failed to fetch: network timeout'), 'network')
   assert.equal(classifyRemoteError('Unexpected bridge response'), 'unknown')
+})
+
+test('launcher version label is compact and avoids a duplicate v prefix', () => {
+  assert.equal(formatLauncherVersion('1.0.10'), 'v1.0.10')
+  assert.equal(formatLauncherVersion('v1.0.10'), 'v1.0.10')
+  assert.equal(formatLauncherVersion('  '), null)
 })
 
 test('formatCharacterName prefers the in-world name and surname over generated nickname', () => {
