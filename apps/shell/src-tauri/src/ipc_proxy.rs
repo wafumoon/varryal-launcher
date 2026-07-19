@@ -150,6 +150,11 @@ fn is_expected_bridge_executable(actual: &std::path::Path, launcher_jre: &std::p
         .eq_ignore_ascii_case(&expected_bin.to_string_lossy().replace('\\', "/"))
 }
 
+#[cfg(any(windows, test))]
+fn should_ignore_process_image_query_failure(process_has_exited: bool) -> bool {
+    process_has_exited
+}
+
 #[cfg(windows)]
 fn kill_bridge_pid(pid: u64, launcher_jre: &std::path::Path) -> Result<()> {
     use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
@@ -189,7 +194,14 @@ fn kill_bridge_pid(pid: u64, launcher_jre: &std::path::Path) -> Result<()> {
         QueryFullProcessImageNameW(handle.0, 0, buffer.as_mut_ptr(), &mut length)
     };
     if queried == 0 {
-        return Err(std::io::Error::last_os_error())
+        let error = std::io::Error::last_os_error();
+        // The bridge may exit after OpenProcess succeeds but before its image is queried.
+        // Ignore only that confirmed exit race; an active or PID-reused process still fails closed.
+        let process_has_exited = unsafe { WaitForSingleObject(handle.0, 0) == WAIT_OBJECT_0 };
+        if should_ignore_process_image_query_failure(process_has_exited) {
+            return Ok(());
+        }
+        return Err(error)
             .context("Unable to identify stale bridge executable");
     }
     let actual = PathBuf::from(String::from_utf16_lossy(&buffer[..length as usize]));
@@ -376,11 +388,20 @@ fn read_handshake_cached(app: &tauri::AppHandle) -> Result<IpcHandshake> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_expected_bridge_executable, request_bridge_shutdown, IpcHandshake};
+    use super::{
+        is_expected_bridge_executable, request_bridge_shutdown,
+        should_ignore_process_image_query_failure, IpcHandshake,
+    };
     use futures_util::{SinkExt, StreamExt};
     use std::path::Path;
     use tokio::net::TcpListener;
     use tokio_tungstenite::{accept_async, tungstenite::Message};
+
+    #[test]
+    fn exited_process_makes_image_query_failure_safe_to_ignore() {
+        assert!(should_ignore_process_image_query_failure(true));
+        assert!(!should_ignore_process_image_query_failure(false));
+    }
 
     #[test]
     fn stale_bridge_cleanup_requires_the_provisioned_jre_executable() {
